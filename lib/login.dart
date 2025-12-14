@@ -1,5 +1,8 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -37,23 +40,145 @@ class _LoginPageState extends State<LoginPage> {
         password: _passController.text.trim(),
       );
 
-      // Go to home and clear back stack
-      if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
-      }
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
     } on FirebaseAuthException catch (e) {
-      setState(() {
-        _errorText = e.message ?? 'Login failed. Please try again.';
-      });
-    } catch (_) {
-      setState(() {
-        _errorText = 'Something went wrong. Please try again.';
-      });
+      setState(() => _errorText = e.message ?? 'Login failed. Please try again.');
+    } catch (e) {
+      setState(() => _errorText = e.toString());
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  // -------------------------------
+  // GOOGLE SIGN-IN (Web + Mobile)
+  // -------------------------------
+  Future<void> _loginWithGoogle() async {
+    setState(() {
+      _isLoading = true;
+      _errorText = null;
+    });
+
+    try {
+      UserCredential userCred;
+
+      if (kIsWeb) {
+        // ✅ WEB: Use Firebase Popup (DON'T use google_sign_in on web)
+        final provider = GoogleAuthProvider();
+        provider.setCustomParameters({'prompt': 'select_account'});
+
+        userCred = await FirebaseAuth.instance.signInWithPopup(provider);
+      } else {
+        // ✅ MOBILE: Use google_sign_in + Firebase credential
+        final googleUser = await GoogleSignIn().signIn();
+        if (googleUser == null) return; // user cancelled
+
+        final googleAuth = await googleUser.authentication;
+
+        final credential = GoogleAuthProvider.credential(
+          accessToken: googleAuth.accessToken,
+          idToken: googleAuth.idToken,
+        );
+
+        userCred = await FirebaseAuth.instance.signInWithCredential(credential);
+      }
+
+      final user = userCred.user;
+      if (user == null) throw Exception('Google sign-in failed (user is null)');
+
+      // Ensure Firestore user docs exist (first time sign-in)
+      await _ensureUserProfile(user);
+
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+    } on FirebaseAuthException catch (e) {
+      setState(() => _errorText = e.message ?? 'Google sign-in failed.');
+    } catch (e) {
+      setState(() => _errorText = e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _ensureUserProfile(User user) async {
+    final db = FirebaseFirestore.instance;
+    final uid = user.uid;
+
+    final userRef = db.collection('users').doc(uid);
+    final userSnap = await userRef.get();
+
+    // Already has profile
+    if (userSnap.exists) return;
+
+    // Ask role only if first time (no users/{uid} yet)
+    final role = await _askRoleDialog();
+    if (role == null) {
+      // user refused role -> sign out so they won't stay logged in half-way
+      await FirebaseAuth.instance.signOut();
+      if (!kIsWeb) {
+        await GoogleSignIn().signOut();
+      }
+      return;
+    }
+
+    final batch = db.batch();
+
+    // users/{uid}
+    batch.set(userRef, {
+      'fullName': user.displayName ?? 'User',
+      'email': user.email ?? '',
+      'role': role, // guardian / caregiver
+      'isAdmin': false,
+      'linkedSeniorIds': [],
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    // role-specific collection
+    final roleCollection = role == 'guardian' ? 'guardians' : 'caregivers';
+    final roleRef = db.collection(roleCollection).doc(uid);
+
+    if (role == 'guardian') {
+      batch.set(roleRef, {
+        'userId': uid,
+        'fullName': user.displayName ?? 'User',
+        'email': user.email ?? '',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } else {
+      batch.set(roleRef, {
+        'userId': uid,
+        'fullName': user.displayName ?? 'User',
+        'email': user.email ?? '',
+        'createdAt': FieldValue.serverTimestamp(),
+        'status': 'PENDING',
+        'isVerified': false,
+        'isActive': false,
+      });
+    }
+
+    await batch.commit();
+  }
+
+  Future<String?> _askRoleDialog() {
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('Select role'),
+        content: const Text('Register as:'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'guardian'),
+            child: const Text('Guardian'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'caregiver'),
+            child: const Text('Caregiver'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -72,10 +197,7 @@ class _LoginPageState extends State<LoginPage> {
                   const SizedBox(height: 16),
                   const Text(
                     'Senior Care',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
                   const Text(
@@ -85,7 +207,6 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   const SizedBox(height: 24),
 
-                  // Email
                   TextFormField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
@@ -95,18 +216,13 @@ class _LoginPageState extends State<LoginPage> {
                       border: OutlineInputBorder(),
                     ),
                     validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Email is required';
-                      }
-                      if (!value.contains('@')) {
-                        return 'Enter a valid email';
-                      }
+                      if (value == null || value.trim().isEmpty) return 'Email is required';
+                      if (!value.contains('@')) return 'Enter a valid email';
                       return null;
                     },
                   ),
                   const SizedBox(height: 16),
 
-                  // Password
                   TextFormField(
                     controller: _passController,
                     obscureText: true,
@@ -116,12 +232,8 @@ class _LoginPageState extends State<LoginPage> {
                       border: OutlineInputBorder(),
                     ),
                     validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Password is required';
-                      }
-                      if (value.length < 6) {
-                        return 'At least 6 characters';
-                      }
+                      if (value == null || value.trim().isEmpty) return 'Password is required';
+                      if (value.length < 6) return 'At least 6 characters';
                       return null;
                     },
                   ),
@@ -146,19 +258,25 @@ class _LoginPageState extends State<LoginPage> {
                         width: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                          : const Text(
-                        'Login',
-                        style: TextStyle(fontSize: 18),
-                      ),
+                          : const Text('Login', style: TextStyle(fontSize: 18)),
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _isLoading ? null : _loginWithGoogle,
+                      icon: const Icon(Icons.account_circle),
+                      label: const Text('Sign in with Google'),
                     ),
                   ),
 
                   const SizedBox(height: 12),
 
                   TextButton(
-                    onPressed: () {
-                      Navigator.pushReplacementNamed(context, '/register');
-                    },
+                    onPressed: () => Navigator.pushReplacementNamed(context, '/register'),
                     child: const Text(
                       "Don't have an account? Register",
                       style: TextStyle(fontSize: 16),

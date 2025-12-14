@@ -36,9 +36,7 @@ class _RegisterPageState extends State<RegisterPage> {
     if (!_formKey.currentState!.validate()) return;
 
     if (_selectedRole == null) {
-      setState(() {
-        _errorText = 'Please select your role.';
-      });
+      setState(() => _errorText = 'Please select your role.');
       return;
     }
 
@@ -48,59 +46,66 @@ class _RegisterPageState extends State<RegisterPage> {
     });
 
     try {
-      // 1️⃣ Create Auth user
-      final userCred = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(
+      // 1) Create Firebase Auth user
+      final userCred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passController.text.trim(),
       );
 
       final user = userCred.user;
-      if (user == null) {
-        throw Exception('User is null after registration');
-      }
+      if (user == null) throw Exception('User is null after registration');
 
       final uid = user.uid;
-      final role = _selectedRole!; // "guardian" or "caregiver"
+      final role = _selectedRole!; // guardian / caregiver
+      final db = FirebaseFirestore.instance;
 
-      // 2️⃣ Base users/{uid} document (login-level info)
-      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+      // 2) References
+      final userRef = db.collection('users').doc(uid);
+      final roleRef = db.collection(role == 'guardian' ? 'guardians' : 'caregivers').doc(uid);
+
+      // 3) Batch write (atomic)
+      final batch = db.batch();
+
+      // users/{uid} (master user profile)
+      batch.set(userRef, {
         'fullName': _nameController.text.trim(),
         'email': _emailController.text.trim(),
         'role': role,
-        'isAdmin': false, // only you set true manually in Firestore
+        'isAdmin': false,
         'createdAt': FieldValue.serverTimestamp(),
+
+        // guardian-only field (safe to keep for all users too)
+        'linkedSeniorIds': role == 'guardian' ? [] : [],
       });
 
-      // 3️⃣ Role-specific profile documents
-
+      // role doc
       if (role == 'guardian') {
-        // Guardian profile (can be extended later with phone, city etc.)
-        await FirebaseFirestore.instance
-            .collection('guardians')
-            .doc(uid)
-            .set({
+        batch.set(roleRef, {
           'userId': uid,
           'fullName': _nameController.text.trim(),
           'email': _emailController.text.trim(),
           'createdAt': FieldValue.serverTimestamp(),
+          // optional guardian fields later: phone, address, etc.
         });
       }
 
       if (role == 'caregiver') {
-        // Logged-in caregiver profile (separate from big caregivers directory)
-        await FirebaseFirestore.instance
-            .collection('caregiverUsers')
-            .doc(uid)
-            .set({
+        batch.set(roleRef, {
           'userId': uid,
           'fullName': _nameController.text.trim(),
           'email': _emailController.text.trim(),
           'createdAt': FieldValue.serverTimestamp(),
+
+          // Verification workflow fields
+          'status': 'PENDING',      // PENDING / SUBMITTED / APPROVED / REJECTED
+          'isVerified': false,
+          'isActive': false,
         });
       }
 
-      // 4️⃣ Navigate to home
+      await batch.commit();
+
+      // 4) Go to home
       if (mounted) {
         Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
       }
@@ -108,16 +113,18 @@ class _RegisterPageState extends State<RegisterPage> {
       setState(() {
         _errorText = e.message ?? 'Registration failed. Please try again.';
       });
-    } catch (e) {
+    } catch (e, st) {
+      debugPrint('REGISTER ERROR: $e');
+      debugPrintStack(stackTrace: st);
+
       setState(() {
-        _errorText = 'Something went wrong. Please try again.';
+        _errorText = e.toString(); // temporarily show the exact error
       });
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
