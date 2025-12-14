@@ -116,7 +116,7 @@ class HomePage extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
 
-                // 👇 GUARDIAN DASHBOARD
+                //  GUARDIAN DASHBOARD
                 if (isGuardian)
                   ListTile(
                     leading: const Icon(Icons.dashboard),
@@ -128,7 +128,7 @@ class HomePage extends StatelessWidget {
                     },
                   ),
 
-                // 👇 Caregiver search – guardians, seniors (and admin)
+                //  Caregiver search – guardians, seniors (and admin)
                 if (isGuardian || isSenior || isAdmin)
                   ListTile(
                     leading: const Icon(Icons.search),
@@ -140,7 +140,7 @@ class HomePage extends StatelessWidget {
                     },
                   ),
 
-                // 👇 Register caregiver – guardian & admin
+                //  Register caregiver – guardian & admin
                 if (isGuardian || isAdmin)
                   ListTile(
                     leading: const Icon(Icons.person_add),
@@ -152,7 +152,7 @@ class HomePage extends StatelessWidget {
                     },
                   ),
 
-                // 👇 Medication reminders – guardian & senior
+                //  Medication reminders – guardian & senior
                 if (isGuardian || isSenior)
                   const ListTile(
                     leading: Icon(Icons.medication),
@@ -162,7 +162,7 @@ class HomePage extends StatelessWidget {
                     // TODO: navigate to medication reminders screen
                   ),
 
-                // 👇 Emergency contacts – guardian & senior
+                //  Emergency contacts – guardian & senior
                 if (isGuardian || isSenior)
                   const ListTile(
                     leading: Icon(Icons.sos),
@@ -172,7 +172,7 @@ class HomePage extends StatelessWidget {
                     // TODO: navigate to emergency contacts screen
                   ),
 
-                // 👇 Caregiver dashboard – for caregiver accounts
+                //  Caregiver dashboard – for caregiver accounts
                 if (isCaregiver)
                   const ListTile(
                     leading: Icon(Icons.assignment_ind),
@@ -182,7 +182,7 @@ class HomePage extends StatelessWidget {
                     // TODO: navigate to caregiver self-profile screen
                   ),
 
-                // 👇 Hidden admin tools – only for you (set isAdmin: true in Firestore)
+                //  Hidden admin tools – only for you (set isAdmin: true in Firestore)
                 if (isAdmin)
                   const ListTile(
                     leading: Icon(Icons.admin_panel_settings),
