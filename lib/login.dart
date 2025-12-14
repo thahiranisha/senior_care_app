@@ -64,13 +64,13 @@ class _LoginPageState extends State<LoginPage> {
       UserCredential userCred;
 
       if (kIsWeb) {
-        // ✅ WEB: Use Firebase Popup (DON'T use google_sign_in on web)
+        //  WEB: Use Firebase Popup (DON'T use google_sign_in on web)
         final provider = GoogleAuthProvider();
         provider.setCustomParameters({'prompt': 'select_account'});
 
         userCred = await FirebaseAuth.instance.signInWithPopup(provider);
       } else {
-        // ✅ MOBILE: Use google_sign_in + Firebase credential
+        //  MOBILE: Use google_sign_in + Firebase credential
         final googleUser = await GoogleSignIn().signIn();
         if (googleUser == null) return; // user cancelled
 
