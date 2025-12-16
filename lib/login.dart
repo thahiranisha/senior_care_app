@@ -26,6 +26,25 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
+  // -------------------------------
+  // ROUTE AFTER LOGIN (role-based)
+  // -------------------------------
+  Future<void> _goAfterLogin(User user) async {
+    final snap = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid)
+        .get();
+
+    final role = (snap.data()?['role'] as String?) ?? '';
+    final route = role == 'guardian' ? '/guardianDashboard' : '/home';
+
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, route, (_) => false);
+  }
+
+  // -------------------------------
+  // EMAIL/PASSWORD LOGIN
+  // -------------------------------
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -35,17 +54,23 @@ class _LoginPageState extends State<LoginPage> {
     });
 
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passController.text.trim(),
       );
 
-      if (!mounted) return;
-      Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+      final user = cred.user;
+      if (user == null) throw Exception('Login failed (user is null)');
+
+      await _goAfterLogin(user);
     } on FirebaseAuthException catch (e) {
-      setState(() => _errorText = e.message ?? 'Login failed. Please try again.');
+      setState(() {
+        _errorText = e.message ?? 'Login failed. Please try again.';
+      });
     } catch (e) {
-      setState(() => _errorText = e.toString());
+      setState(() {
+        _errorText = e.toString();
+      });
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -64,13 +89,12 @@ class _LoginPageState extends State<LoginPage> {
       UserCredential userCred;
 
       if (kIsWeb) {
-        //  WEB: Use Firebase Popup (DON'T use google_sign_in on web)
+        // WEB: use Firebase popup (do NOT use google_sign_in on web)
         final provider = GoogleAuthProvider();
         provider.setCustomParameters({'prompt': 'select_account'});
-
         userCred = await FirebaseAuth.instance.signInWithPopup(provider);
       } else {
-        //  MOBILE: Use google_sign_in + Firebase credential
+        // MOBILE: google_sign_in -> Firebase credential
         final googleUser = await GoogleSignIn().signIn();
         if (googleUser == null) return; // user cancelled
 
@@ -88,30 +112,35 @@ class _LoginPageState extends State<LoginPage> {
       if (user == null) throw Exception('Google sign-in failed (user is null)');
 
       // Ensure Firestore user docs exist (first time sign-in)
-      await _ensureUserProfile(user);
+      final ok = await _ensureUserProfile(user);
+      if (!ok) return;
 
-      if (!mounted) return;
-      Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
+      await _goAfterLogin(user);
     } on FirebaseAuthException catch (e) {
-      setState(() => _errorText = e.message ?? 'Google sign-in failed.');
+      setState(() {
+        _errorText = e.message ?? 'Google sign-in failed.';
+      });
     } catch (e) {
-      setState(() => _errorText = e.toString());
+      setState(() {
+        _errorText = e.toString();
+      });
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _ensureUserProfile(User user) async {
+  // returns false if user cancels role selection
+  Future<bool> _ensureUserProfile(User user) async {
     final db = FirebaseFirestore.instance;
     final uid = user.uid;
 
     final userRef = db.collection('users').doc(uid);
     final userSnap = await userRef.get();
 
-    // Already has profile
-    if (userSnap.exists) return;
+    // already has profile
+    if (userSnap.exists) return true;
 
-    // Ask role only if first time (no users/{uid} yet)
+    // ask role only if first time
     final role = await _askRoleDialog();
     if (role == null) {
       // user refused role -> sign out so they won't stay logged in half-way
@@ -119,7 +148,7 @@ class _LoginPageState extends State<LoginPage> {
       if (!kIsWeb) {
         await GoogleSignIn().signOut();
       }
-      return;
+      return false;
     }
 
     final batch = db.batch();
@@ -158,6 +187,7 @@ class _LoginPageState extends State<LoginPage> {
     }
 
     await batch.commit();
+    return true;
   }
 
   Future<String?> _askRoleDialog() {
@@ -216,7 +246,9 @@ class _LoginPageState extends State<LoginPage> {
                       border: OutlineInputBorder(),
                     ),
                     validator: (value) {
-                      if (value == null || value.trim().isEmpty) return 'Email is required';
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Email is required';
+                      }
                       if (!value.contains('@')) return 'Enter a valid email';
                       return null;
                     },
@@ -232,7 +264,9 @@ class _LoginPageState extends State<LoginPage> {
                       border: OutlineInputBorder(),
                     ),
                     validator: (value) {
-                      if (value == null || value.trim().isEmpty) return 'Password is required';
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Password is required';
+                      }
                       if (value.length < 6) return 'At least 6 characters';
                       return null;
                     },
@@ -276,7 +310,8 @@ class _LoginPageState extends State<LoginPage> {
                   const SizedBox(height: 12),
 
                   TextButton(
-                    onPressed: () => Navigator.pushReplacementNamed(context, '/register'),
+                    onPressed: () =>
+                        Navigator.pushReplacementNamed(context, '/register'),
                     child: const Text(
                       "Don't have an account? Register",
                       style: TextStyle(fontSize: 16),

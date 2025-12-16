@@ -58,6 +58,7 @@ class MyApp extends StatelessWidget {
         '/register': (context) => const RegisterPage(),
         '/home': (context) => const HomePage(),
         '/guardianDashboard': (context) => const GuardianDashboardScreen(),
+
       },
     );
   }

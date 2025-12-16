@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "866983687701",
+    "project_id": "seniorcareapp-66a1f",
+    "storage_bucket": "seniorcareapp-66a1f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:866983687701:android:60504bf578b45bb357c01c",
+        "android_client_info": {
+          "package_name": "com.example.senior_care_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "866983687701-prj5eq3vs3g95tf2j3q4b6js86kukmun.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.senior_care_app",
+            "certificate_hash": "7b852e75ec9aea0ad492dfff166153ea30618cd6"
+          }
+        },
+        {
+          "client_id": "866983687701-43i04ihfi2olj2uofp91svjva4n5n3tn.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCRm5ktgie79IFExzPqGvldQjtxBF21L7Q"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "866983687701-43i04ihfi2olj2uofp91svjva4n5n3tn.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "866983687701-elqciln6j3ed598k5rnktbtpb58htej1.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.seniorCareApp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
