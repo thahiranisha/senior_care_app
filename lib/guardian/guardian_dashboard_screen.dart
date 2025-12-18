@@ -2,7 +2,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'dialogs/register_senior_dialog.dart';
 import 'guardian_dashboard_content.dart';
 import 'dialogs/register_senior_dialog.dart' as reg;
 import 'models/senior_registration_data.dart';
@@ -353,7 +352,8 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                         children: [
                           Expanded(
                             child: DropdownButtonFormField<String>(
-                              value: selectedId,
+                              key: ValueKey(selectedId),
+                              initialValue: selectedId,
                               decoration: InputDecoration(
                                 labelText: 'Choose senior',
                                 border: OutlineInputBorder(

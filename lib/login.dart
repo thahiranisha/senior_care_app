@@ -20,6 +20,43 @@ class _LoginPageState extends State<LoginPage> {
   String? _errorText;
 
   @override
+  void initState() {
+    super.initState();
+    // WEB: handle the result of signInWithRedirect (if any)
+    if (kIsWeb) {
+      _handleWebRedirect();
+    }
+  }
+
+  Future<void> _handleWebRedirect() async {
+    try {
+      setState(() {
+        _isLoading = true;
+        _errorText = null;
+      });
+
+      final result = await FirebaseAuth.instance.getRedirectResult();
+      final user = result.user;
+      if (user == null) return;
+
+      // Make sure the user profile exists
+      final ok = await _ensureUserProfile(user);
+      if (!ok) return;
+
+      // Use the same role-based routing as the normal login flow.
+      await _goAfterLogin(user);
+    } catch (e) {
+      setState(() {
+        _errorText = 'Google login failed (redirect): $e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  @override
   void dispose() {
     _emailController.dispose();
     _passController.dispose();
@@ -89,10 +126,10 @@ class _LoginPageState extends State<LoginPage> {
       UserCredential userCred;
 
       if (kIsWeb) {
-        // WEB: use Firebase popup (do NOT use google_sign_in on web)
-        final provider = GoogleAuthProvider();
-        provider.setCustomParameters({'prompt': 'select_account'});
-        userCred = await FirebaseAuth.instance.signInWithPopup(provider);
+        // WEB: Redirect flow avoids COOP/"window.closed" issues that sometimes appear with popups.
+        final provider = GoogleAuthProvider()..setCustomParameters({'prompt': 'select_account'});
+        await FirebaseAuth.instance.signInWithRedirect(provider);
+        return; // app reloads; handled in initState via getRedirectResult()
       } else {
         // MOBILE: google_sign_in -> Firebase credential
         final googleUser = await GoogleSignIn().signIn();

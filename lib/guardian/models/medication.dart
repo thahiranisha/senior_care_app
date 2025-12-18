@@ -49,7 +49,7 @@ class Medication {
 
   static Medication fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? {};
-    DateTime? _dt(dynamic v) => v is Timestamp ? v.toDate() : null;
+    DateTime? dt(dynamic v) => v is Timestamp ? v.toDate() : null;
 
     return Medication(
       id: doc.id,
@@ -58,13 +58,13 @@ class Medication {
       route: data['route'] as String?,
       times: ((data['times'] ?? []) as List).map((e) => e.toString()).toList(),
       instructions: data['instructions'] as String?,
-      startDate: _dt(data['startDate']),
-      endDate: _dt(data['endDate']),
+      startDate: dt(data['startDate']),
+      endDate: dt(data['endDate']),
       isActive: (data['isActive'] as bool?) ?? true,
       createdBy: data['createdBy'] as String?,
       updatedBy: data['updatedBy'] as String?,
-      createdAt: _dt(data['createdAt']),
-      updatedAt: _dt(data['updatedAt']),
+      createdAt: dt(data['createdAt']),
+      updatedAt: dt(data['updatedAt']),
     );
   }
 }

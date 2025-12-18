@@ -2,15 +2,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'login.dart';
+
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
   Future<void> _signOut(BuildContext context) async {
+    // Avoid using BuildContext across an async gap.
+    final nav = Navigator.of(context);
     await FirebaseAuth.instance.signOut();
-
-    // In a StatelessWidget, BuildContext has no `mounted` property,
-    // so we just navigate directly after sign-out.
-    Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
+    nav.pushNamedAndRemoveUntil('/login', (route) => false);
   }
 
   @override
@@ -19,12 +20,7 @@ class HomePage extends StatelessWidget {
 
     // If somehow no user is logged in, send back to login
     if (authUser == null) {
-      Future.microtask(() {
-        Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
-      });
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const LoginPage();
     }
 
     // Listen to this user's profile document in Firestore

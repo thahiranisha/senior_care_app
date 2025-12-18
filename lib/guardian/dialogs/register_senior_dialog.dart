@@ -65,7 +65,7 @@ Future<SeniorRegistrationData?> showRegisterSeniorDialog(BuildContext context) a
                   const SizedBox(height: 12),
 
                   DropdownButtonFormField<String>(
-                    value: gender,
+                    initialValue: gender,
                     decoration: const InputDecoration(
                       labelText: 'Gender (optional)',
                       border: OutlineInputBorder(),
@@ -158,7 +158,7 @@ Future<SeniorRegistrationData?> showRegisterSeniorDialog(BuildContext context) a
                   const SizedBox(height: 12),
 
                   DropdownButtonFormField<String>(
-                    value: mobility,
+                    initialValue: mobility,
                     decoration: const InputDecoration(
                       labelText: 'Mobility level',
                       border: OutlineInputBorder(),

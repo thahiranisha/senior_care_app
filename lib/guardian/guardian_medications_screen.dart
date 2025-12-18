@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../services/medication_reminder_scheduler.dart';
 import 'dialogs/medication_form_dialog.dart';
 import 'models/medication.dart';
 
@@ -29,20 +30,48 @@ class GuardianMedicationsScreen extends StatelessWidget {
     final data = await showMedicationFormDialog(context);
     if (data == null) return;
 
-    await _medsRef().add({
+    // 1) Add to Firestore and capture the created doc reference
+    final docRef = await _medsRef().add({
       'name': data['name'],
       'dosage': data['dosage'],
       'route': data['route'],
       'times': data['times'],
       'instructions': data['instructions'],
-      'startDate': data['startDate'] == null ? null : Timestamp.fromDate(data['startDate']),
-      'endDate': data['endDate'] == null ? null : Timestamp.fromDate(data['endDate']),
+      'startDate': data['startDate'] == null
+          ? null
+          : Timestamp.fromDate(data['startDate']),
+      'endDate': data['endDate'] == null
+          ? null
+          : Timestamp.fromDate(data['endDate']),
       'isActive': data['isActive'] ?? true,
       'createdBy': uid,
       'updatedBy': uid,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+
+    // 2) Build Medication model with new id
+    final med = Medication(
+      id: docRef.id,
+      name: data['name'] as String,
+      dosage: data['dosage'] as String?,
+      route: data['route'] as String?,
+      times: ((data['times'] ?? []) as List).map((e) => e.toString()).toList(),
+      instructions: data['instructions'] as String?,
+      startDate: data['startDate'] as DateTime?,
+      endDate: data['endDate'] as DateTime?,
+      isActive: (data['isActive'] ?? true) as bool,
+      createdBy: uid,
+      updatedBy: uid,
+      createdAt: null,
+      updatedAt: null,
+    );
+
+    // 3) Schedule local reminders (offline)
+    await MedicationReminderScheduler.instance.scheduleForMedication(
+      seniorId: seniorId,
+      med: med,
+    );
   }
 
   Future<void> _edit(BuildContext context, Medication med) async {
@@ -52,18 +81,54 @@ class GuardianMedicationsScreen extends StatelessWidget {
     final data = await showMedicationFormDialog(context, initial: med);
     if (data == null) return;
 
+    final updatedTimes =
+    ((data['times'] ?? []) as List).map((e) => e.toString()).toList();
+
     await _medsRef().doc(med.id).update({
       'name': data['name'],
       'dosage': data['dosage'],
       'route': data['route'],
-      'times': data['times'],
+      'times': updatedTimes,
       'instructions': data['instructions'],
-      'startDate': data['startDate'] == null ? null : Timestamp.fromDate(data['startDate']),
-      'endDate': data['endDate'] == null ? null : Timestamp.fromDate(data['endDate']),
+      'startDate': data['startDate'] == null
+          ? null
+          : Timestamp.fromDate(data['startDate']),
+      'endDate': data['endDate'] == null
+          ? null
+          : Timestamp.fromDate(data['endDate']),
       'isActive': data['isActive'] ?? true,
       'updatedBy': uid,
       'updatedAt': FieldValue.serverTimestamp(),
     });
+
+    final updated = Medication(
+      id: med.id,
+      name: data['name'] as String,
+      dosage: data['dosage'] as String?,
+      route: data['route'] as String?,
+      times: updatedTimes,
+      instructions: data['instructions'] as String?,
+      startDate: data['startDate'] as DateTime?,
+      endDate: data['endDate'] as DateTime?,
+      isActive: (data['isActive'] ?? true) as bool,
+      createdBy: med.createdBy,
+      updatedBy: uid,
+      createdAt: med.createdAt,
+      updatedAt: med.updatedAt,
+    );
+
+    // Cancel old schedules then schedule new
+    await MedicationReminderScheduler.instance.cancelForMedication(
+      seniorId: seniorId,
+      med: med,
+    );
+
+    if (updated.isActive) {
+      await MedicationReminderScheduler.instance.scheduleForMedication(
+        seniorId: seniorId,
+        med: updated,
+      );
+    }
   }
 
   Future<void> _remove(BuildContext context, Medication med) async {
@@ -73,13 +138,26 @@ class GuardianMedicationsScreen extends StatelessWidget {
         title: const Text('Remove medication'),
         content: Text('Remove "${med.name}"?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Remove'),
+          ),
         ],
       ),
     );
 
     if (ok != true) return;
+
+    // Cancel notifications first
+    await MedicationReminderScheduler.instance.cancelForMedication(
+      seniorId: seniorId,
+      med: med,
+    );
+
     await _medsRef().doc(med.id).delete();
   }
 
@@ -104,16 +182,17 @@ class GuardianMedicationsScreen extends StatelessWidget {
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: query.snapshots(),
         builder: (context, snap) {
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final docs = snap.data!.docs;
+          if (!snap.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
 
-          if (docs.isEmpty) {
+          final meds = snap.data!.docs.map((d) => Medication.fromDoc(d)).toList();
+
+          if (meds.isEmpty) {
             return const Center(
               child: Text('No medications added yet. Tap "Add medication".'),
             );
           }
-
-          final meds = docs.map((d) => Medication.fromDoc(d)).toList();
 
           return ListView.separated(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 80),

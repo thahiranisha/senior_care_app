@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:senior_care_app/services/notification_service.dart';
 
 import 'firebase_options.dart';
 import 'guardian_dashboard.dart';
@@ -13,20 +14,22 @@ import 'home.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Check if user already logged in
+  // Local notifications: ONLY for mobile/desktop (not web)
+  if (!kIsWeb) {
+    await NotificationService.instance.init();
+    await NotificationService.instance.requestPermissions();
+  }
+
   final user = FirebaseAuth.instance.currentUser;
 
   runApp(
     DevicePreview(
       enabled: !kReleaseMode,
-      builder: (context) => MyApp(
-        isLoggedIn: user != null,
-      ),
+      builder: (context) => MyApp(isLoggedIn: user != null),
     ),
   );
 }
@@ -39,7 +42,6 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      useInheritedMediaQuery: true, // required for DevicePreview
       locale: DevicePreview.locale(context),
       builder: DevicePreview.appBuilder,
       debugShowCheckedModeBanner: false,
@@ -58,7 +60,6 @@ class MyApp extends StatelessWidget {
         '/register': (context) => const RegisterPage(),
         '/home': (context) => const HomePage(),
         '/guardianDashboard': (context) => const GuardianDashboardScreen(),
-
       },
     );
   }

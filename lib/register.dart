@@ -196,7 +196,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
                   // Role selection (guardian / caregiver)
                   DropdownButtonFormField<String>(
-                    value: _selectedRole,
+                    initialValue: _selectedRole,
                     decoration: const InputDecoration(
                       labelText: 'Register as',
                       border: OutlineInputBorder(),
