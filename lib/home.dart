@@ -174,12 +174,13 @@ class HomePage extends StatelessWidget {
 
                 //  Caregiver dashboard – for caregiver accounts
                 if (isCaregiver)
-                  const ListTile(
-                    leading: Icon(Icons.assignment_ind),
-                    title: Text('My caregiver profile'),
-                    subtitle: Text(
-                        'View or update your caregiver details shown to families'),
-                    // TODO: navigate to caregiver self-profile screen
+                  ListTile(
+                    leading: const Icon(Icons.assignment_ind),
+                    title: const Text('My caregiver dashboard'),
+                    subtitle: const Text('View status, complete profile, upload verification'),
+                    onTap: () {
+                      Navigator.pushNamed(context, '/caregiverDashboard');
+                    },
                   ),
 
                 //  Hidden admin tools – only for you (set isAdmin: true in Firestore)

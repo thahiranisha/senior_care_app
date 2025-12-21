@@ -4,6 +4,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'caregiver/ caregiver_documents_screen.dart';
+import 'caregiver/caregiver_dashboard_screen.dart';
+import 'caregiver/caregiver_profile_edit_screen.dart';
 import 'firebase_options.dart';
 import 'guardian_dashboard.dart';
 import 'login.dart';
@@ -58,6 +61,10 @@ class MyApp extends StatelessWidget {
         '/register': (context) => const RegisterPage(),
         '/home': (context) => const HomePage(),
         '/guardianDashboard': (context) => const GuardianDashboardScreen(),
+        '/caregiverDashboard': (context) => const CaregiverDashboardScreen(),
+        '/caregiverProfileEdit': (context) => const CaregiverProfileEditScreen(),
+        '/caregiverDocuments': (context) => const CaregiverDocumentsScreen(),
+
 
       },
     );

@@ -36,7 +36,12 @@ class _LoginPageState extends State<LoginPage> {
         .get();
 
     final role = (snap.data()?['role'] as String?) ?? '';
-    final route = role == 'guardian' ? '/guardianDashboard' : '/home';
+    final route = role == 'guardian'
+        ? '/guardianDashboard'
+        : role == 'caregiver'
+        ? '/caregiverDashboard'
+        : '/home';
+
 
     if (!mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, route, (_) => false);
@@ -137,17 +142,126 @@ class _LoginPageState extends State<LoginPage> {
     final userRef = db.collection('users').doc(uid);
     final userSnap = await userRef.get();
 
-    // already has profile
-    if (userSnap.exists) return true;
-
-    // ask role only if first time
-    final role = await _askRoleDialog();
-    if (role == null) {
-      // user refused role -> sign out so they won't stay logged in half-way
+    Future<void> signOutFully() async {
       await FirebaseAuth.instance.signOut();
       if (!kIsWeb) {
         await GoogleSignIn().signOut();
       }
+    }
+
+    bool isValidRole(String? r) => r == 'guardian' || r == 'caregiver';
+
+    // Helper: create/repair role-specific doc and migrate caregiver status
+    Future<void> ensureRoleDoc(String role) async {
+      final roleCollection = role == 'guardian' ? 'guardians' : 'caregivers';
+      final roleRef = db.collection(roleCollection).doc(uid);
+      final roleSnap = await roleRef.get();
+
+      if (!roleSnap.exists) {
+        // create minimal role doc
+        if (role == 'guardian') {
+          await roleRef.set({
+            'userId': uid,
+            'fullName': user.displayName ?? 'User',
+            'email': user.email ?? '',
+            'createdAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        } else {
+          await roleRef.set({
+            'userId': uid,
+            'fullName': user.displayName ?? 'User',
+            'email': user.email ?? '',
+            'createdAt': FieldValue.serverTimestamp(),
+
+            'status': 'PENDING_VERIFICATION',
+            'statusReason': '',
+            'isActive': false,
+
+            'isVerified': false,
+          }, SetOptions(merge: true));
+        }
+        return;
+      }
+
+      // If exists, patch missing basics + migrate caregiver statuses
+      final data = roleSnap.data() ?? <String, dynamic>{};
+      final patch = <String, dynamic>{
+        'userId': uid,
+        'fullName': (data['fullName'] as String?)?.trim().isNotEmpty == true
+            ? data['fullName']
+            : (user.displayName ?? 'User'),
+        'email': (data['email'] as String?)?.trim().isNotEmpty == true
+            ? data['email']
+            : (user.email ?? ''),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (role == 'caregiver') {
+        final rawStatus = (data['status'] as String?)?.toUpperCase().trim() ?? '';
+        final oldVerified = (data['isVerified'] as bool?) ?? false;
+
+        String newStatus;
+        if (rawStatus == 'BLOCKED') {
+          newStatus = 'BLOCKED';
+        } else if (rawStatus == 'VERIFIED' || rawStatus == 'APPROVED' || oldVerified) {
+          newStatus = 'VERIFIED';
+        } else {
+          // includes rawStatus == 'PENDING' or unknown/empty
+          newStatus = 'PENDING_VERIFICATION';
+        }
+
+        patch['status'] = newStatus;
+
+        patch['isVerified'] = (newStatus == 'VERIFIED');
+
+        // If blocked, force not active
+        if (newStatus == 'BLOCKED') {
+          patch['isActive'] = false;
+        } else {
+          // ensure field exists (don’t override if already set)
+          if (!data.containsKey('isActive')) patch['isActive'] = false;
+        }
+
+        // ensure field exists
+        if (!data.containsKey('statusReason')) patch['statusReason'] = '';
+      }
+
+      await roleRef.set(patch, SetOptions(merge: true));
+    }
+
+    // ------------------------------------------------------------
+    // CASE 1: users/{uid} already exists
+    // ------------------------------------------------------------
+    if (userSnap.exists) {
+      final userData = userSnap.data() ?? <String, dynamic>{};
+      String? role = (userData['role'] as String?)?.toLowerCase().trim();
+
+      // If role missing/invalid, ask now (rare but possible)
+      if (!isValidRole(role)) {
+        role = await _askRoleDialog();
+        if (role == null) {
+          await signOutFully();
+          return false;
+        }
+
+        // patch role into users/{uid} without overwriting existing fields
+        await userRef.set({
+          'role': role,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+
+      // Ensure role-specific doc exists and is migrated/patched
+      await ensureRoleDoc(role!);
+      return true;
+    }
+
+    // ------------------------------------------------------------
+    // CASE 2: First time user -> ask role and create docs
+    // ------------------------------------------------------------
+    final role = await _askRoleDialog();
+    if (role == null) {
+      await signOutFully();
       return false;
     }
 
@@ -161,9 +275,8 @@ class _LoginPageState extends State<LoginPage> {
       'isAdmin': false,
       'linkedSeniorIds': [],
       'createdAt': FieldValue.serverTimestamp(),
-    });
+    }, SetOptions(merge: true));
 
-    // role-specific collection
     final roleCollection = role == 'guardian' ? 'guardians' : 'caregivers';
     final roleRef = db.collection(roleCollection).doc(uid);
 
@@ -173,17 +286,21 @@ class _LoginPageState extends State<LoginPage> {
         'fullName': user.displayName ?? 'User',
         'email': user.email ?? '',
         'createdAt': FieldValue.serverTimestamp(),
-      });
+      }, SetOptions(merge: true));
     } else {
       batch.set(roleRef, {
         'userId': uid,
         'fullName': user.displayName ?? 'User',
         'email': user.email ?? '',
         'createdAt': FieldValue.serverTimestamp(),
-        'status': 'PENDING',
-        'isVerified': false,
+
+        'status': 'PENDING_VERIFICATION',
+        'statusReason': '',
         'isActive': false,
-      });
+
+        // keep for backward compatibility
+        'isVerified': false,
+      }, SetOptions(merge: true));
     }
 
     await batch.commit();
