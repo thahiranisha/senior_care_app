@@ -30,13 +30,26 @@ class _LoginPageState extends State<LoginPage> {
   // ROUTE AFTER LOGIN (role-based)
   // -------------------------------
   Future<void> _goAfterLogin(User user) async {
+    await user.getIdToken(true);
+
     final snap = await FirebaseFirestore.instance
         .collection('users')
         .doc(user.uid)
         .get();
 
-    final role = (snap.data()?['role'] as String?) ?? '';
-    final route = role == 'guardian' ? '/guardianDashboard' : '/home';
+    final data = snap.data() ?? {};
+    final role = (data['role'] as String?)?.toLowerCase().trim() ?? '';
+    final isAdmin = data['isAdmin'] == true;
+
+    // NOTE: Ensure these routes exist in MaterialApp routes
+    final route = isAdmin
+        ? '/adminDashboard'
+        : role == 'guardian'
+        ? '/guardianDashboard'
+    // If you don't have this route yet, change to '/home'
+        : role == 'caregiver'
+        ? '/caregiverDashboard'
+        : '/home';
 
     if (!mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, route, (_) => false);
@@ -61,6 +74,9 @@ class _LoginPageState extends State<LoginPage> {
 
       final user = cred.user;
       if (user == null) throw Exception('Login failed (user is null)');
+
+      final ok = await _ensureUserProfile(user);
+      if (!ok) return;
 
       await _goAfterLogin(user);
     } on FirebaseAuthException catch (e) {
@@ -89,14 +105,15 @@ class _LoginPageState extends State<LoginPage> {
       UserCredential userCred;
 
       if (kIsWeb) {
-        // WEB: use Firebase popup (do NOT use google_sign_in on web)
         final provider = GoogleAuthProvider();
         provider.setCustomParameters({'prompt': 'select_account'});
         userCred = await FirebaseAuth.instance.signInWithPopup(provider);
       } else {
-        // MOBILE: google_sign_in -> Firebase credential
         final googleUser = await GoogleSignIn().signIn();
-        if (googleUser == null) return; // user cancelled
+        if (googleUser == null) {
+          // user cancelled
+          return;
+        }
 
         final googleAuth = await googleUser.authentication;
 
@@ -111,7 +128,6 @@ class _LoginPageState extends State<LoginPage> {
       final user = userCred.user;
       if (user == null) throw Exception('Google sign-in failed (user is null)');
 
-      // Ensure Firestore user docs exist (first time sign-in)
       final ok = await _ensureUserProfile(user);
       if (!ok) return;
 
@@ -129,64 +145,140 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  // returns false if user cancels role selection
+  // -------------------------------
+  // Ensure Firestore profile exists + role is set
+  // Returns false if user cancels role selection.
+  // IMPORTANT: For existing caregiver docs, do NOT update status/isActive/etc (rules block it).
+  // -------------------------------
   Future<bool> _ensureUserProfile(User user) async {
     final db = FirebaseFirestore.instance;
     final uid = user.uid;
 
     final userRef = db.collection('users').doc(uid);
-    final userSnap = await userRef.get();
 
-    // already has profile
-    if (userSnap.exists) return true;
-
-    // ask role only if first time
-    final role = await _askRoleDialog();
-    if (role == null) {
-      // user refused role -> sign out so they won't stay logged in half-way
+    Future<void> signOutFully() async {
       await FirebaseAuth.instance.signOut();
       if (!kIsWeb) {
         await GoogleSignIn().signOut();
       }
+    }
+
+    bool isValidRole(String? r) => r == 'guardian' || r == 'caregiver';
+
+    Future<void> ensureAdminDocIfNeeded({required bool isAdmin}) async {
+      if (!isAdmin) return;
+      final adminRef = db.collection('admins').doc(uid);
+      await adminRef.set({
+        'userId': uid,
+        'fullName': user.displayName ?? 'Admin',
+        'email': user.email ?? '',
+        'updatedAt': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    }
+
+    /// Creates role doc if missing.
+    /// If role doc exists -> updates ONLY safe fields to avoid permission errors.
+    Future<void> ensureRoleDoc(String role) async {
+      final roleCollection = role == 'guardian' ? 'guardians' : 'caregivers';
+      final roleRef = db.collection(roleCollection).doc(uid);
+
+      final roleSnap = await roleRef.get();
+      final data = roleSnap.data() ?? <String, dynamic>{};
+
+      if (!roleSnap.exists) {
+        // Create is allowed by your rules
+        if (role == 'guardian') {
+          await roleRef.set({
+            'userId': uid,
+            'fullName': user.displayName ?? 'User',
+            'email': user.email ?? '',
+            'createdAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        } else {
+          await roleRef.set({
+            'userId': uid,
+            'fullName': user.displayName ?? 'User',
+            'email': user.email ?? '',
+            'createdAt': FieldValue.serverTimestamp(),
+            'status': 'PENDING_VERIFICATION',
+            'statusReason': '',
+            'isActive': false,
+            'isVerified': false, // compatibility
+          }, SetOptions(merge: true));
+        }
+        return;
+      }
+
+      // Existing doc: ONLY safe patch (do NOT touch status/isActive/isVerified/statusReason)
+      final patch = <String, dynamic>{
+        'userId': uid,
+        'fullName': (data['fullName'] as String?)?.trim().isNotEmpty == true
+            ? data['fullName']
+            : (user.displayName ?? 'User'),
+        'email': (data['email'] as String?)?.trim().isNotEmpty == true
+            ? data['email']
+            : (user.email ?? ''),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      await roleRef.set(patch, SetOptions(merge: true));
+    }
+
+    // ------------------------------------------------------------
+    // users/{uid} exists -> ensure role + admin doc
+    // ------------------------------------------------------------
+    final userSnap = await userRef.get();
+
+    if (userSnap.exists) {
+      final userData = userSnap.data() ?? <String, dynamic>{};
+
+      final isAdmin = userData['isAdmin'] == true;
+      await ensureAdminDocIfNeeded(isAdmin: isAdmin);
+
+      String? role = (userData['role'] as String?)?.toLowerCase().trim();
+
+      // If role missing/invalid, ask now
+      if (!isValidRole(role)) {
+        role = await _askRoleDialog();
+        if (role == null) {
+          await signOutFully();
+          return false;
+        }
+
+        // Update users/{uid} role only (allowed by your rules as owner)
+        await userRef.set({
+          'role': role,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+
+      await ensureRoleDoc(role!);
+      return true;
+    }
+
+    // ------------------------------------------------------------
+    // First-time user -> ask role and create docs
+    // ------------------------------------------------------------
+    final role = await _askRoleDialog();
+    if (role == null) {
+      await signOutFully();
       return false;
     }
 
-    final batch = db.batch();
-
-    // users/{uid}
-    batch.set(userRef, {
+    // 1) create users/{uid}
+    await userRef.set({
       'fullName': user.displayName ?? 'User',
       'email': user.email ?? '',
-      'role': role, // guardian / caregiver
+      'role': role,
       'isAdmin': false,
       'linkedSeniorIds': [],
       'createdAt': FieldValue.serverTimestamp(),
-    });
+    }, SetOptions(merge: true));
 
-    // role-specific collection
-    final roleCollection = role == 'guardian' ? 'guardians' : 'caregivers';
-    final roleRef = db.collection(roleCollection).doc(uid);
+    // 2) create role doc
+    await ensureRoleDoc(role);
 
-    if (role == 'guardian') {
-      batch.set(roleRef, {
-        'userId': uid,
-        'fullName': user.displayName ?? 'User',
-        'email': user.email ?? '',
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-    } else {
-      batch.set(roleRef, {
-        'userId': uid,
-        'fullName': user.displayName ?? 'User',
-        'email': user.email ?? '',
-        'createdAt': FieldValue.serverTimestamp(),
-        'status': 'PENDING',
-        'isVerified': false,
-        'isActive': false,
-      });
-    }
-
-    await batch.commit();
     return true;
   }
 
