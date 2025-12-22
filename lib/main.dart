@@ -62,6 +62,9 @@ class MyApp extends StatelessWidget {
         '/guardianDashboard': (context) => const GuardianDashboardScreen(),
         '/adminDashboard': (context) => const AdminDashboardScreen(),
         '/adminVerifyCaregivers': (context) => const AdminVerifyCaregiversScreen(),
+        '/caregiverDashboard': (context) => const CaregiverDashboardScreen(),
+        '/caregiverProfileEdit': (context) => const CaregiverProfileEditScreen(),
+        '/caregiverDocuments': (context) => const CaregiverDocumentsScreen(),
 
       },
     );
