@@ -11,6 +11,9 @@ import 'guardian_dashboard.dart';
 import 'login.dart';
 import 'register.dart';
 import 'home.dart';
+import 'caregiver/caregiver_dashboard_screen.dart';
+import 'caregiver/caregiver_profile_edit_screen.dart';
+import 'caregiver/caregiver_documents_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

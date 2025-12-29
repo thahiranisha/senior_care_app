@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'admin_caregiver_request_detail_screen.dart';
+
 class AdminVerifyCaregiversScreen extends StatefulWidget {
   const AdminVerifyCaregiversScreen({super.key});
 
@@ -16,7 +18,7 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 3, vsync: this);
+    _tab = TabController(length: 4, vsync: this);
   }
 
   @override
@@ -36,6 +38,24 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
       'isActive': false, // keep off until caregiver enables it
       'verifiedAt': FieldValue.serverTimestamp(),
       'verifiedBy': adminId,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> _reject(String caregiverId) async {
+    final adminId = FirebaseAuth.instance.currentUser?.uid;
+    if (adminId == null) return;
+
+    final reason = await _askReasonDialog(title: 'Reject caregiver', hint: 'Reason (required)');
+    if (reason == null || reason.trim().isEmpty) return;
+
+    await FirebaseFirestore.instance.collection('caregivers').doc(caregiverId).set({
+      'status': 'REJECTED',
+      'isVerified': false,
+      'isActive': false,
+      'statusReason': reason.trim(),
+      'rejectedAt': FieldValue.serverTimestamp(),
+      'rejectedBy': adminId,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
@@ -101,7 +121,7 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
   Widget build(BuildContext context) {
     final pendingQuery = FirebaseFirestore.instance
         .collection('caregivers')
-        .where('status', whereIn: ['PENDING_VERIFICATION', 'PENDING']);
+        .where('status', isEqualTo: 'PENDING_VERIFICATION');
 
     final verifiedQuery = FirebaseFirestore.instance
         .collection('caregivers')
@@ -111,6 +131,10 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
         .collection('caregivers')
         .where('status', isEqualTo: 'BLOCKED');
 
+    final rejectedQuery = FirebaseFirestore.instance
+        .collection('caregivers')
+        .where('status', isEqualTo: 'REJECTED');
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Caregiver Verification'),
@@ -119,6 +143,7 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
           tabs: const [
             Tab(text: 'Pending'),
             Tab(text: 'Verified'),
+            Tab(text: 'Rejected'),
             Tab(text: 'Blocked'),
           ],
         ),
@@ -135,10 +160,8 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
                   onPressed: () => _approve(id),
                   child: const Text('Approve'),
                 ),
-                OutlinedButton(
-                  onPressed: () => _block(id),
-                  child: const Text('Block'),
-                ),
+                OutlinedButton(onPressed: () => _reject(id), child: const Text('Reject')),
+                OutlinedButton(onPressed: () => _block(id), child: const Text('Block')),
               ],
             ),
           ),
@@ -147,6 +170,16 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
             trailingBuilder: (id, data) => OutlinedButton(
               onPressed: () => _block(id),
               child: const Text('Block'),
+            ),
+          ),
+          _CaregiverList(
+            query: rejectedQuery,
+            trailingBuilder: (id, data) => Wrap(
+              spacing: 8,
+              children: [
+                ElevatedButton(onPressed: () => _approve(id), child: const Text('Approve')),
+                OutlinedButton(onPressed: () => _block(id), child: const Text('Block')),
+              ],
             ),
           ),
           _CaregiverList(
@@ -196,34 +229,45 @@ class _CaregiverList extends StatelessWidget {
             final exp = data['experienceYears'];
             final reason = (data['statusReason'] as String?) ?? '';
 
-            return Card(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                    const SizedBox(height: 4),
-                    if (email.isNotEmpty) Text(email),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        if (city.isNotEmpty) Chip(label: Text(city)),
-                        const SizedBox(width: 8),
-                        if (exp != null) Chip(label: Text('Exp: $exp')),
+            return InkWell(
+              borderRadius: BorderRadius.circular(18),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AdminCaregiverRequestDetailScreen(caregiverId: doc.id),
+                  ),
+                );
+              },
+              child: Card(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      const SizedBox(height: 4),
+                      if (email.isNotEmpty) Text(email),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          if (city.isNotEmpty) Chip(label: Text(city)),
+                          const SizedBox(width: 8),
+                          if (exp != null) Chip(label: Text('Exp: $exp')),
+                        ],
+                      ),
+                      if (reason.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text('Reason: $reason', style: const TextStyle(color: Colors.red)),
                       ],
-                    ),
-                    if (reason.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text('Reason: $reason', style: const TextStyle(color: Colors.red)),
+                      const SizedBox(height: 10),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: trailingBuilder(doc.id, data),
+                      ),
                     ],
-                    const SizedBox(height: 10),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: trailingBuilder(doc.id, data),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             );

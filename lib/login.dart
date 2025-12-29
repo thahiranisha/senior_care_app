@@ -30,29 +30,38 @@ class _LoginPageState extends State<LoginPage> {
   // ROUTE AFTER LOGIN (role-based)
   // -------------------------------
   Future<void> _goAfterLogin(User user) async {
-    await user.getIdToken(true);
+    try {
+      final token = await user.getIdToken(true);
+      debugPrint('TOKEN OK uid=${user.uid} tokenPresent=${token != null}');
 
-    final snap = await FirebaseFirestore.instance
-        .collection('users')
-        .doc(user.uid)
-        .get();
+      final snap = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
 
-    final data = snap.data() ?? {};
-    final role = (data['role'] as String?)?.toLowerCase().trim() ?? '';
-    final isAdmin = data['isAdmin'] == true;
+      debugPrint('USER DOC read OK exists=${snap.exists}');
 
-    // NOTE: Ensure these routes exist in MaterialApp routes
-    final route = isAdmin
-        ? '/adminDashboard'
-        : role == 'guardian'
-        ? '/guardianDashboard'
-    // If you don't have this route yet, change to '/home'
-        : role == 'caregiver'
-        ? '/caregiverDashboard'
-        : '/home';
+      final data = snap.data() ?? {};
+      final role = (data['role'] as String?)?.toLowerCase().trim() ?? '';
+      final isAdmin = data['isAdmin'] == true;
 
-    if (!mounted) return;
-    Navigator.pushNamedAndRemoveUntil(context, route, (_) => false);
+      final route = isAdmin
+          ? '/adminDashboard'
+          : role == 'guardian'
+          ? '/guardianDashboard'
+          : role == 'caregiver'
+          ? '/caregiverDashboard'
+          : '/home';
+
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(context, route, (_) => false);
+    } on FirebaseException catch (e) {
+      debugPrint('FIRESTORE ERROR code=${e.code} message=${e.message}');
+      rethrow;
+    } catch (e) {
+      debugPrint('LOGIN ROUTE ERROR: $e');
+      rethrow;
+    }
   }
 
   // -------------------------------
@@ -153,7 +162,6 @@ class _LoginPageState extends State<LoginPage> {
   Future<bool> _ensureUserProfile(User user) async {
     final db = FirebaseFirestore.instance;
     final uid = user.uid;
-
     final userRef = db.collection('users').doc(uid);
 
     Future<void> signOutFully() async {
@@ -165,8 +173,7 @@ class _LoginPageState extends State<LoginPage> {
 
     bool isValidRole(String? r) => r == 'guardian' || r == 'caregiver';
 
-    Future<void> ensureAdminDocIfNeeded({required bool isAdmin}) async {
-      if (!isAdmin) return;
+    Future<void> ensureAdminDocIfNeeded() async {
       final adminRef = db.collection('admins').doc(uid);
       await adminRef.set({
         'userId': uid,
@@ -177,9 +184,9 @@ class _LoginPageState extends State<LoginPage> {
       }, SetOptions(merge: true));
     }
 
-    /// Creates role doc if missing.
-    /// If role doc exists -> updates ONLY safe fields to avoid permission errors.
     Future<void> ensureRoleDoc(String role) async {
+      if (!isValidRole(role)) return;
+
       final roleCollection = role == 'guardian' ? 'guardians' : 'caregivers';
       final roleRef = db.collection(roleCollection).doc(uid);
 
@@ -187,7 +194,6 @@ class _LoginPageState extends State<LoginPage> {
       final data = roleSnap.data() ?? <String, dynamic>{};
 
       if (!roleSnap.exists) {
-        // Create is allowed by your rules
         if (role == 'guardian') {
           await roleRef.set({
             'userId': uid,
@@ -201,16 +207,15 @@ class _LoginPageState extends State<LoginPage> {
             'fullName': user.displayName ?? 'User',
             'email': user.email ?? '',
             'createdAt': FieldValue.serverTimestamp(),
-            'status': 'PENDING_VERIFICATION',
+            'status': 'DRAFT',
             'statusReason': '',
             'isActive': false,
-            'isVerified': false, // compatibility
+            'isVerified': false,
           }, SetOptions(merge: true));
         }
         return;
       }
 
-      // Existing doc: ONLY safe patch (do NOT touch status/isActive/isVerified/statusReason)
       final patch = <String, dynamic>{
         'userId': uid,
         'fullName': (data['fullName'] as String?)?.trim().isNotEmpty == true
@@ -222,35 +227,53 @@ class _LoginPageState extends State<LoginPage> {
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
+      void keepIfPresent(String key) {
+        if (data.containsKey(key)) patch[key] = data[key];
+      }
+
+      for (final k in [
+        'status',
+        'isActive',
+        'statusReason',
+        'verifiedAt',
+        'verifiedBy',
+        'blockedAt',
+        'blockedBy',
+      ]) {
+        keepIfPresent(k);
+      }
+
       await roleRef.set(patch, SetOptions(merge: true));
     }
 
     // ------------------------------------------------------------
-    // users/{uid} exists -> ensure role + admin doc
+    // EXISTING PROFILE: DO NOT ASK ROLE
     // ------------------------------------------------------------
     final userSnap = await userRef.get();
 
     if (userSnap.exists) {
       final userData = userSnap.data() ?? <String, dynamic>{};
 
-      final isAdmin = userData['isAdmin'] == true;
-      await ensureAdminDocIfNeeded(isAdmin: isAdmin);
+      final role = (userData['role'] as String?)?.toLowerCase().trim();
+      final isAdmin = (userData['isAdmin'] == true) || (role == 'admin');
 
-      String? role = (userData['role'] as String?)?.toLowerCase().trim();
+      if (isAdmin) {
+        await ensureAdminDocIfNeeded();
 
-      // If role missing/invalid, ask now
-      if (!isValidRole(role)) {
-        role = await _askRoleDialog();
-        if (role == null) {
-          await signOutFully();
-          return false;
-        }
-
-        // Update users/{uid} role only (allowed by your rules as owner)
+        // optional: keep users doc consistent
         await userRef.set({
-          'role': role,
+          'role': 'admin',
+          'isAdmin': true,
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
+
+        return true;
+      }
+
+      if (!isValidRole(role)) {
+        // no dialog (your requirement)
+        await signOutFully();
+        return false; // show UI message: "Profile role missing/invalid. Contact support."
       }
 
       await ensureRoleDoc(role!);
@@ -258,7 +281,7 @@ class _LoginPageState extends State<LoginPage> {
     }
 
     // ------------------------------------------------------------
-    // First-time user -> ask role and create docs
+    // NEW USER ONLY: ask role and create docs
     // ------------------------------------------------------------
     final role = await _askRoleDialog();
     if (role == null) {
@@ -266,7 +289,6 @@ class _LoginPageState extends State<LoginPage> {
       return false;
     }
 
-    // 1) create users/{uid}
     await userRef.set({
       'fullName': user.displayName ?? 'User',
       'email': user.email ?? '',
@@ -274,11 +296,10 @@ class _LoginPageState extends State<LoginPage> {
       'isAdmin': false,
       'linkedSeniorIds': [],
       'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
 
-    // 2) create role doc
     await ensureRoleDoc(role);
-
     return true;
   }
 
@@ -380,10 +401,10 @@ class _LoginPageState extends State<LoginPage> {
                       onPressed: _isLoading ? null : _login,
                       child: _isLoading
                           ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
                           : const Text('Login', style: TextStyle(fontSize: 18)),
                     ),
                   ),

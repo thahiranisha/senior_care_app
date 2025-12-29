@@ -2,6 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'admin_caregiver_requests_screen.dart';
+
+
 class AdminDashboardScreen extends StatelessWidget {
   const AdminDashboardScreen({super.key});
 
@@ -25,10 +28,7 @@ class AdminDashboardScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Admin Dashboard'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () => _logout(context),
-          ),
+          IconButton(icon: const Icon(Icons.logout), onPressed: () => _logout(context)),
         ],
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
@@ -39,21 +39,15 @@ class AdminDashboardScreen extends StatelessWidget {
 
           final data = snap.data!.data() ?? {};
           final isAdmin = data['isAdmin'] == true;
-          if (!isAdmin) {
-            return const Center(child: Text('Access denied (admin only).'));
-          }
+          if (!isAdmin) return const Center(child: Text('Access denied (admin only).'));
 
-          final pendingQuery = FirebaseFirestore.instance
-              .collection('caregivers')
-              .where('status', whereIn: ['PENDING_VERIFICATION', 'PENDING']);
+          final caregivers = FirebaseFirestore.instance.collection('caregivers');
 
-          final verifiedQuery = FirebaseFirestore.instance
-              .collection('caregivers')
-              .where('status', isEqualTo: 'VERIFIED');
-
-          final blockedQuery = FirebaseFirestore.instance
-              .collection('caregivers')
-              .where('status', isEqualTo: 'BLOCKED');
+          // ✅ pending supports BOTH values
+          final pendingQuery = caregivers.where('status', whereIn: ['PENDING_VERIFICATION', 'PENDING']);
+          final verifiedQuery = caregivers.where('status', isEqualTo: 'VERIFIED');
+          final rejectedQuery = caregivers.where('status', isEqualTo: 'REJECTED');
+          final blockedQuery  = caregivers.where('status', isEqualTo: 'BLOCKED');
 
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -77,6 +71,16 @@ class AdminDashboardScreen extends StatelessWidget {
                       title: 'Pending',
                       query: pendingQuery,
                       color: Colors.orange,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminCaregiverRequestsScreen(
+                              filter: CaregiverRequestFilter.pending,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -85,6 +89,40 @@ class AdminDashboardScreen extends StatelessWidget {
                       title: 'Verified',
                       query: verifiedQuery,
                       color: Colors.green,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminCaregiverRequestsScreen(
+                              filter: CaregiverRequestFilter.verified,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 10),
+
+              Row(
+                children: [
+                  Expanded(
+                    child: _CountCard(
+                      title: 'Rejected',
+                      query: rejectedQuery,
+                      color: Colors.deepOrange,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminCaregiverRequestsScreen(
+                              filter: CaregiverRequestFilter.rejected,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -93,6 +131,16 @@ class AdminDashboardScreen extends StatelessWidget {
                       title: 'Blocked',
                       query: blockedQuery,
                       color: Colors.red,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminCaregiverRequestsScreen(
+                              filter: CaregiverRequestFilter.blocked,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -120,11 +168,13 @@ class _CountCard extends StatelessWidget {
   final String title;
   final Query<Map<String, dynamic>> query;
   final Color color;
+  final VoidCallback? onTap; // ✅
 
   const _CountCard({
     required this.title,
     required this.query,
     required this.color,
+    this.onTap,
   });
 
   @override
@@ -133,17 +183,22 @@ class _CountCard extends StatelessWidget {
       stream: query.snapshots(),
       builder: (context, snap) {
         final count = snap.data?.docs.length ?? 0;
-        return Card(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 6),
-                Text('$count', style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
-              ],
+
+        return InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 6),
+                  Text('$count', style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
+                ],
+              ),
             ),
           ),
         );

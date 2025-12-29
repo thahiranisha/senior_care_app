@@ -97,7 +97,9 @@ class _RegisterPageState extends State<RegisterPage> {
           'createdAt': FieldValue.serverTimestamp(),
 
           // Verification workflow fields
-          'status': 'PENDING',      // PENDING / SUBMITTED / APPROVED / REJECTED
+          // DRAFT -> caregiver completes profile + documents, then submits
+          // PENDING_VERIFICATION -> admin review
+          'status': 'DRAFT',
           'isVerified': false,
           'isActive': false,
         });
