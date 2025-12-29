@@ -238,7 +238,7 @@ class AdminCaregiverRequestDetailScreen extends StatelessWidget {
             await ref.set({
               'status': 'VERIFIED',
               'isVerified': true,
-              'isActive': false,
+              'isActive': true,
               'statusReason': '',
               'verifiedAt': FieldValue.serverTimestamp(),
               'verifiedBy': adminId,
@@ -355,7 +355,6 @@ class AdminCaregiverRequestDetailScreen extends StatelessWidget {
               const Text('Documents', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
 
-              // ✅ Nice 2-column grid for core docs
               GridView.count(
                 crossAxisCount: 2,
                 crossAxisSpacing: 12,

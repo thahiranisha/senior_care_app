@@ -1,37 +1,45 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:device_preview/device_preview.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'admin/admin_dashboard_screen.dart';
 import 'admin/admin_verify_caregivers_screen.dart';
+import 'caregiver/caregiver_dashboard_screen.dart';
+import 'caregiver/caregiver_documents_screen.dart';
+import 'caregiver/caregiver_profile_edit_screen.dart';
+import 'caregiver/caregiver_requests_screen.dart';
+import 'common/coming_soon_screen.dart';
 import 'firebase_options.dart';
+import 'guardian/caregiver_public_profile_screen.dart';
+import 'guardian/caregiver_search_screen.dart';
+import 'guardian/guardian_requests_screen.dart';
+import 'guardian/request_care_screen.dart';
 import 'guardian_dashboard.dart';
+import 'home.dart';
 import 'login.dart';
 import 'register.dart';
-import 'home.dart';
-import 'caregiver/caregiver_dashboard_screen.dart';
-import 'caregiver/caregiver_profile_edit_screen.dart';
-import 'caregiver/caregiver_documents_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Initialize Firebase
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
-  // Check if user already logged in
+  // For Flutter Web: avoid some persistence issues
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: false,
+  );
+
   final user = FirebaseAuth.instance.currentUser;
 
   runApp(
     DevicePreview(
       enabled: !kReleaseMode,
-      builder: (context) => MyApp(
-        isLoggedIn: user != null,
-      ),
+      builder: (context) => MyApp(isLoggedIn: user != null),
     ),
   );
 }
@@ -44,7 +52,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      useInheritedMediaQuery: true, // required for DevicePreview
+      useInheritedMediaQuery: true,
       locale: DevicePreview.locale(context),
       builder: DevicePreview.appBuilder,
       debugShowCheckedModeBanner: false,
@@ -62,13 +70,40 @@ class MyApp extends StatelessWidget {
         '/login': (context) => const LoginPage(),
         '/register': (context) => const RegisterPage(),
         '/home': (context) => const HomePage(),
+
         '/guardianDashboard': (context) => const GuardianDashboardScreen(),
         '/adminDashboard': (context) => const AdminDashboardScreen(),
         '/adminVerifyCaregivers': (context) => const AdminVerifyCaregiversScreen(),
+
         '/caregiverDashboard': (context) => const CaregiverDashboardScreen(),
         '/caregiverProfileEdit': (context) => const CaregiverProfileEditScreen(),
         '/caregiverDocuments': (context) => const CaregiverDocumentsScreen(),
 
+        // Guardian: Find Caregivers
+        '/caregivers': (context) => const CaregiverSearchScreen(),
+
+        // Guardian: placeholder features
+        '/guardianAlerts': (context) => const ComingSoonScreen(title: 'Alerts'),
+        '/guardianCheckins': (context) => const ComingSoonScreen(title: 'Check-ins'),
+        '/guardianAppointments': (context) => const ComingSoonScreen(title: 'Appointments'),
+        '/guardianReminders': (context) => const ComingSoonScreen(title: 'Reminders'),
+        '/requestCare': (context) {
+          final args = ModalRoute.of(context)!.settings.arguments as Map;
+          return RequestCareScreen(
+            caregiverId: args['caregiverId'],
+            caregiverName: args['caregiverName'],
+          );
+        },
+
+        '/guardianRequests': (context) => const GuardianRequestsScreen(),
+        '/caregiverRequests': (context) => const CaregiverRequestsScreen(),
+
+        // Public caregiver profile (expects: arguments = caregiverId as String)
+        '/caregiverPublicProfile': (context) {
+          final args = ModalRoute.of(context)!.settings.arguments;
+          final id = args is String ? args : '';
+          return CaregiverPublicProfileScreen(caregiverId: id);
+        },
       },
     );
   }

@@ -5,8 +5,31 @@ import 'package:flutter/material.dart';
 import 'caregiver_status.dart';
 import 'caregiver_theme.dart';
 
-class CaregiverDashboardScreen extends StatelessWidget {
+class CaregiverDashboardScreen extends StatefulWidget {
   const CaregiverDashboardScreen({super.key});
+
+  @override
+  State<CaregiverDashboardScreen> createState() => _CaregiverDashboardScreenState();
+}
+
+class _CaregiverDashboardScreenState extends State<CaregiverDashboardScreen> {
+  String? _uid;
+  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _userDocStream;
+  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _caregiverDocStream;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      _uid = user.uid;
+
+      // ✅ Create streams ONCE (important for Flutter web stability)
+      _userDocStream = FirebaseFirestore.instance.collection('users').doc(_uid).snapshots();
+      _caregiverDocStream = FirebaseFirestore.instance.collection('caregivers').doc(_uid).snapshots();
+    }
+  }
 
   Future<void> _logout(BuildContext context) async {
     final ok = await showDialog<bool>(
@@ -30,9 +53,8 @@ class CaregiverDashboardScreen extends StatelessWidget {
     if (ok != true) return;
 
     await FirebaseAuth.instance.signOut();
-    if (context.mounted) {
-      Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
-    }
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
   }
 
   Color _statusColor(CaregiverStatus s) {
@@ -123,9 +145,7 @@ class CaregiverDashboardScreen extends StatelessWidget {
     final docs = (caregiver['documents'] as Map?)?.cast<String, dynamic>() ?? {};
     bool hasNonEmptyString(dynamic v) => v is String && v.trim().isNotEmpty;
 
-    // ✅ keys must match what CaregiverDocumentsScreen saves
-    return hasNonEmptyString(docs['nicFrontUrl']) &&
-        hasNonEmptyString(docs['nicBackUrl']);
+    return hasNonEmptyString(docs['nicFrontUrl']) && hasNonEmptyString(docs['nicBackUrl']);
   }
 
   Future<void> _submitForVerification(BuildContext context, String uid) async {
@@ -153,7 +173,7 @@ class CaregiverDashboardScreen extends StatelessWidget {
 
     await FirebaseFirestore.instance.collection('caregivers').doc(uid).set({
       'status': 'PENDING_VERIFICATION',
-      'isVerified': false, // backward compatibility
+      'isVerified': false,
       'isActive': false,
       'statusReason': '',
       'submittedAt': FieldValue.serverTimestamp(),
@@ -163,15 +183,10 @@ class CaregiverDashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    if (_uid == null) {
       return const Scaffold(body: Center(child: Text('Not logged in')));
     }
-
-    final uid = user.uid;
-
-    final userDocStream =
-    FirebaseFirestore.instance.collection('users').doc(uid).snapshots();
+    final uid = _uid!;
 
     return Scaffold(
       backgroundColor: CaregiverTheme.background,
@@ -188,7 +203,7 @@ class CaregiverDashboardScreen extends StatelessWidget {
         ],
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: userDocStream,
+        stream: _userDocStream,
         builder: (context, userSnap) {
           if (userSnap.hasError) {
             return Center(child: Text('Error: ${userSnap.error}'));
@@ -203,13 +218,8 @@ class CaregiverDashboardScreen extends StatelessWidget {
             return const Center(child: Text('Access denied (caregiver only).'));
           }
 
-          final caregiversDocStream = FirebaseFirestore.instance
-              .collection('caregivers')
-              .doc(uid)
-              .snapshots();
-
           return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            stream: caregiversDocStream,
+            stream: _caregiverDocStream,
             builder: (context, careSnap) {
               if (careSnap.hasError) {
                 return Center(child: Text('Error: ${careSnap.error}'));
@@ -237,11 +247,9 @@ class CaregiverDashboardScreen extends StatelessWidget {
               final docsOk = docsComp['ok'] as bool;
               final missingDocs = (docsComp['missing'] as List).cast<String>();
 
-              // ✅ Single canSubmit (no duplicates)
               final hasDocs = _hasRequiredDocs(caregiver);
               final canSubmit =
-                  (status == CaregiverStatus.draft ||
-                      status == CaregiverStatus.rejected) &&
+                  (status == CaregiverStatus.draft || status == CaregiverStatus.rejected) &&
                       progress >= 1.0 &&
                       hasDocs;
 
@@ -249,9 +257,7 @@ class CaregiverDashboardScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(16),
                 children: [
                   Card(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(18),
-                    ),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(
@@ -259,26 +265,21 @@ class CaregiverDashboardScreen extends StatelessWidget {
                         children: [
                           Text(
                             'Hello, $fullName',
-                            style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 10),
                           Row(
                             children: [
                               Chip(
                                 label: Text(_statusLabel(status)),
-                                backgroundColor:
-                                _statusColor(status).withOpacity(0.15),
+                                backgroundColor: _statusColor(status).withOpacity(0.15),
                                 labelStyle: TextStyle(
                                   color: _statusColor(status),
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
                               const SizedBox(width: 10),
-                              if (status == CaregiverStatus.blocked &&
-                                  statusReason.isNotEmpty)
+                              if (status == CaregiverStatus.blocked && statusReason.isNotEmpty)
                                 Expanded(
                                   child: Text(
                                     statusReason,
@@ -289,34 +290,24 @@ class CaregiverDashboardScreen extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 14),
-                          Text(
-                            'Profile completeness: ${(progress * 100).round()}%',
-                          ),
+                          Text('Profile completeness: ${(progress * 100).round()}%'),
                           const SizedBox(height: 8),
                           ClipRRect(
                             borderRadius: BorderRadius.circular(12),
-                            child: LinearProgressIndicator(
-                              value: progress,
-                              minHeight: 10,
-                            ),
+                            child: LinearProgressIndicator(value: progress, minHeight: 10),
                           ),
                           const SizedBox(height: 10),
                           if (missing.isNotEmpty) ...[
-                            const Text(
-                              'Missing fields:',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
+                            const Text('Missing fields:', style: TextStyle(fontWeight: FontWeight.bold)),
                             const SizedBox(height: 8),
                             Wrap(
                               spacing: 8,
                               runSpacing: 8,
                               children: missing
-                                  .map(
-                                    (m) => Chip(
-                                  label: Text(m),
-                                  backgroundColor: Colors.grey.shade200,
-                                ),
-                              )
+                                  .map((m) => Chip(
+                                label: Text(m),
+                                backgroundColor: Colors.grey.shade200,
+                              ))
                                   .toList(),
                             ),
                           ],
@@ -326,9 +317,7 @@ class CaregiverDashboardScreen extends StatelessWidget {
                               const Icon(Icons.badge_outlined, size: 18),
                               const SizedBox(width: 6),
                               Text(
-                                docsOk
-                                    ? 'Documents: complete'
-                                    : 'Documents: missing',
+                                docsOk ? 'Documents: complete' : 'Documents: missing',
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   color: docsOk ? Colors.green : Colors.orange,
@@ -342,25 +331,20 @@ class CaregiverDashboardScreen extends StatelessWidget {
                               spacing: 8,
                               runSpacing: 8,
                               children: missingDocs
-                                  .map(
-                                    (m) => Chip(
-                                  label: Text(m.replaceAll('Url', '')),
-                                  backgroundColor: Colors.orange.shade50,
-                                ),
-                              )
+                                  .map((m) => Chip(
+                                label: Text(m.replaceAll('Url', '')),
+                                backgroundColor: Colors.orange.shade50,
+                              ))
                                   .toList(),
                             ),
                           ],
-                          if ((status == CaregiverStatus.rejected ||
-                              status == CaregiverStatus.blocked) &&
+                          if ((status == CaregiverStatus.rejected || status == CaregiverStatus.blocked) &&
                               statusReason.isNotEmpty) ...[
                             const SizedBox(height: 12),
                             Text(
                               'Reason: $statusReason',
                               style: TextStyle(
-                                color: status == CaregiverStatus.blocked
-                                    ? Colors.red
-                                    : Colors.deepOrange,
+                                color: status == CaregiverStatus.blocked ? Colors.red : Colors.deepOrange,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -370,10 +354,9 @@ class CaregiverDashboardScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 14),
+
                   Card(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(18),
-                    ),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                     child: Column(
                       children: [
                         SwitchListTile(
@@ -387,10 +370,7 @@ class CaregiverDashboardScreen extends StatelessWidget {
                           onChanged: !isVerified
                               ? null
                               : (v) async {
-                            await FirebaseFirestore.instance
-                                .collection('caregivers')
-                                .doc(uid)
-                                .set({
+                            await FirebaseFirestore.instance.collection('caregivers').doc(uid).set({
                               'isActive': v,
                               'updatedAt': FieldValue.serverTimestamp(),
                             }, SetOptions(merge: true));
@@ -400,34 +380,33 @@ class CaregiverDashboardScreen extends StatelessWidget {
                         ListTile(
                           leading: const Icon(Icons.edit),
                           title: const Text('Edit profile'),
-                          subtitle: const Text(
-                            'Update city, rates, experience, skills',
-                          ),
-                          onTap: () => Navigator.pushNamed(
-                            context,
-                            '/caregiverProfileEdit',
-                          ),
+                          subtitle: const Text('Update city, rates, experience, skills'),
+                          onTap: () => Navigator.pushNamed(context, '/caregiverProfileEdit'),
                         ),
                         const Divider(height: 0),
                         ListTile(
                           leading: const Icon(Icons.badge),
                           title: const Text('Verification documents'),
                           subtitle: const Text('Upload NIC and certificates'),
-                          onTap: () => Navigator.pushNamed(
-                            context,
-                            '/caregiverDocuments',
-                          ),
+                          onTap: () => Navigator.pushNamed(context, '/caregiverDocuments'),
+                        ),
+
+                        // Care Requests (incoming)
+                        const Divider(height: 0),
+                        ListTile(
+                          leading: const Icon(Icons.inbox),
+                          title: const Text('Care Requests'),
+                          subtitle: const Text('View & accept/reject requests'),
+                          onTap: () => Navigator.pushNamed(context, '/caregiverRequests'),
                         ),
                       ],
                     ),
                   ),
+
                   const SizedBox(height: 14),
 
-                  // Submit for verification
                   Card(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(18),
-                    ),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                     child: Padding(
                       padding: const EdgeInsets.all(16),
                       child: Column(
@@ -435,25 +414,15 @@ class CaregiverDashboardScreen extends StatelessWidget {
                         children: [
                           const Text(
                             'Verification request',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 8),
-                          if (status ==
-                              CaregiverStatus.pendingVerification) ...[
-                            const Text(
-                              'Your request has been submitted and is awaiting admin verification.',
-                            ),
+                          if (status == CaregiverStatus.pendingVerification) ...[
+                            const Text('Your request has been submitted and is awaiting admin verification.'),
                           ] else if (status == CaregiverStatus.verified) ...[
-                            const Text(
-                              'You are verified. Turn on “Active” above to appear in caregiver search.',
-                            ),
+                            const Text('You are verified. Turn on “Active” above to appear in caregiver search.'),
                           ] else if (status == CaregiverStatus.blocked) ...[
-                            const Text(
-                              'Your account is blocked. Please contact the admin.',
-                            ),
+                            const Text('Your account is blocked. Please contact the admin.'),
                           ] else ...[
                             Text(
                               canSubmit
@@ -462,45 +431,29 @@ class CaregiverDashboardScreen extends StatelessWidget {
                             ),
                             const SizedBox(height: 10),
                             if (missing.isNotEmpty) ...[
-                              const Text(
-                                'Missing profile fields:',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
+                              const Text('Missing profile fields:', style: TextStyle(fontWeight: FontWeight.bold)),
                               const SizedBox(height: 6),
                               Wrap(
                                 spacing: 8,
                                 runSpacing: 8,
-                                children: missing
-                                    .map((m) => Chip(label: Text(m)))
-                                    .toList(),
+                                children: missing.map((m) => Chip(label: Text(m))).toList(),
                               ),
                               const SizedBox(height: 10),
                             ],
                             if (!docsOk) ...[
-                              const Text(
-                                'Missing documents:',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
+                              const Text('Missing documents:', style: TextStyle(fontWeight: FontWeight.bold)),
                               const SizedBox(height: 6),
                               Wrap(
                                 spacing: 8,
                                 runSpacing: 8,
-                                children: missingDocs
-                                    .map(
-                                      (m) => Chip(
-                                    label: Text(m.replaceAll('Url', '')),
-                                  ),
-                                )
-                                    .toList(),
+                                children: missingDocs.map((m) => Chip(label: Text(m.replaceAll('Url', '')))).toList(),
                               ),
                               const SizedBox(height: 10),
                             ],
                             SizedBox(
                               width: double.infinity,
                               child: ElevatedButton.icon(
-                                onPressed: canSubmit
-                                    ? () => _submitForVerification(context, uid)
-                                    : null,
+                                onPressed: canSubmit ? () => _submitForVerification(context, uid) : null,
                                 icon: const Icon(Icons.send),
                                 label: const Text('Submit for verification'),
                               ),
