@@ -2,8 +2,29 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-class CaregiverRequestsScreen extends StatelessWidget {
+class CaregiverRequestsScreen extends StatefulWidget {
   const CaregiverRequestsScreen({super.key});
+
+  @override
+  State<CaregiverRequestsScreen> createState() => _CaregiverRequestsScreenState();
+}
+
+class _CaregiverRequestsScreenState extends State<CaregiverRequestsScreen> {
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _stream;
+  User? _user;
+
+  @override
+  void initState() {
+    super.initState();
+    _user = FirebaseAuth.instance.currentUser;
+    if (_user != null) {
+      _stream = FirebaseFirestore.instance
+          .collection('care_requests')
+          .where('caregiverId', isEqualTo: _user!.uid)
+          .orderBy('createdAt', descending: true)
+          .snapshots();
+    }
+  }
 
   Future<String?> _askReason(BuildContext context, String title) async {
     final c = TextEditingController();
@@ -28,20 +49,14 @@ class CaregiverRequestsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    if (_user == null || _stream == null) {
       return const Scaffold(body: Center(child: Text('Please login.')));
     }
-
-    final q = FirebaseFirestore.instance
-        .collection('care_requests')
-        .where('caregiverId', isEqualTo: user.uid)
-        .orderBy('createdAt', descending: true);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Care Requests')),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: q.snapshots(),
+        stream: _stream,
         builder: (context, snap) {
           if (snap.hasError) return Center(child: Text('Error: ${snap.error}'));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
@@ -70,7 +85,7 @@ class CaregiverRequestsScreen extends StatelessWidget {
               final startText = start == null
                   ? '-'
                   : '${start.year}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')} '
-                  '${start.hour.toString().padLeft(2, '0')}:${start.minute.toString().padLeft(2, '0')}';
+                      '${start.hour.toString().padLeft(2, '0')}:${start.minute.toString().padLeft(2, '0')}';
 
               Future<void> accept() async {
                 await d.reference.set({

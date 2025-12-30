@@ -21,6 +21,9 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
 
   String? _selectedSeniorId;
 
+  // Cache user stream once (Flutter Web stability)
+  Stream<DocumentSnapshot<Map<String, dynamic>>>? _userDocStream;
+
   // Cache senior docs (id -> senior doc)
   final Map<String, Map<String, dynamic>> _seniorCache = {};
   bool _loadingCache = false;
@@ -172,7 +175,8 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     }
 
     final uid = currentUser.uid;
-    final userDocStream = FirebaseFirestore.instance.collection('users').doc(uid).snapshots();
+    // Create once per uid to avoid repeated subscribe/unsubscribe on web.
+    _userDocStream ??= FirebaseFirestore.instance.collection('users').doc(uid).snapshots();
 
     return Scaffold(
       backgroundColor: _bgColor,
@@ -189,7 +193,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
         ],
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: userDocStream,
+        stream: _userDocStream,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return Center(child: Text('Error: ${snapshot.error}'));

@@ -2,24 +2,48 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-class HomePage extends StatelessWidget {
+/// HomePage shows features based on the signed-in user's profile.
+///
+/// Flutter Web note:
+/// Cache the Firestore stream once (instead of creating it inside build)
+/// to avoid rapid re-subscriptions that can trigger Firestore JS watch
+/// assertion failures on Chrome.
+class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
-  Future<void> _signOut(BuildContext context) async {
-    await FirebaseAuth.instance.signOut();
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
 
-    // In a StatelessWidget, BuildContext has no `mounted` property,
-    // so we just navigate directly after sign-out.
+class _HomePageState extends State<HomePage> {
+  User? _authUser;
+  Stream<DocumentSnapshot<Map<String, dynamic>>>? _userDocStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _authUser = FirebaseAuth.instance.currentUser;
+    if (_authUser != null) {
+      _userDocStream = FirebaseFirestore.instance
+          .collection('users')
+          .doc(_authUser!.uid)
+          .snapshots();
+    }
+  }
+
+  Future<void> _signOut() async {
+    await FirebaseAuth.instance.signOut();
+    if (!mounted) return;
     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
   }
 
   @override
   Widget build(BuildContext context) {
-    final authUser = FirebaseAuth.instance.currentUser;
-
     // If somehow no user is logged in, send back to login
-    if (authUser == null) {
-      Future.microtask(() {
+    if (_authUser == null || _userDocStream == null) {
+      // schedule navigation after first frame
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
         Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
       });
       return const Scaffold(
@@ -27,14 +51,8 @@ class HomePage extends StatelessWidget {
       );
     }
 
-    // Listen to this user's profile document in Firestore
-    final userDocStream = FirebaseFirestore.instance
-        .collection('users')
-        .doc(authUser.uid)
-        .snapshots();
-
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: userDocStream,
+      stream: _userDocStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
@@ -55,8 +73,7 @@ class HomePage extends StatelessWidget {
 
         final data = snapshot.data?.data() ?? {};
 
-        final fullName =
-            (data['fullName'] as String?) ?? authUser.email ?? 'User';
+        final fullName = (data['fullName'] as String?) ?? _authUser!.email ?? 'User';
         final role = (data['role'] as String?) ?? 'guardian';
         final isAdmin = (data['isAdmin'] as bool?) ?? false;
 
@@ -64,15 +81,14 @@ class HomePage extends StatelessWidget {
         final isSenior = role == 'senior';
         final isCaregiver = role == 'caregiver';
 
-        // Safe role label
-        final roleLabel =
-        role.isNotEmpty ? '${role[0].toUpperCase()}${role.substring(1)}' : 'User';
+        final roleLabel = role.isNotEmpty
+            ? '${role[0].toUpperCase()}${role.substring(1)}'
+            : 'User';
 
         return Scaffold(
           appBar: AppBar(
             title: const Text('Senior Care Home'),
             actions: [
-              // Show role badge
               Center(
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8.0),
@@ -86,7 +102,7 @@ class HomePage extends StatelessWidget {
                 ),
               ),
               IconButton(
-                onPressed: () => _signOut(context),
+                onPressed: _signOut,
                 icon: const Icon(Icons.logout),
                 tooltip: 'Sign out',
               ),
@@ -104,93 +120,67 @@ class HomePage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  'Role: $roleLabel',
-                  style: const TextStyle(fontSize: 18),
-                ),
+                Text('Role: $roleLabel', style: const TextStyle(fontSize: 18)),
                 const SizedBox(height: 24),
-
                 const Text(
                   'Available features',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 12),
 
-                //  GUARDIAN DASHBOARD
                 if (isGuardian)
                   ListTile(
                     leading: const Icon(Icons.dashboard),
                     title: const Text('Guardian dashboard'),
-                    subtitle: const Text(
-                        'Monitor check-ins, medications, alerts and visits'),
-                    onTap: () {
-                      Navigator.pushNamed(context, '/guardianDashboard');
-                    },
+                    subtitle: const Text('Monitor check-ins, medications, alerts and visits'),
+                    onTap: () => Navigator.pushNamed(context, '/guardianDashboard'),
                   ),
 
-                //  Caregiver search – guardians, seniors (and admin)
                 if (isGuardian || isSenior || isAdmin)
                   ListTile(
                     leading: const Icon(Icons.search),
                     title: const Text('Caregiver search by city'),
-                    subtitle: const Text(
-                        'Browse caregivers filtered by location and experience'),
-                    onTap: () {
-                      Navigator.pushNamed(context, '/caregivers');
-                    },
+                    subtitle: const Text('Browse caregivers filtered by location and experience'),
+                    onTap: () => Navigator.pushNamed(context, '/caregivers'),
                   ),
 
-                //  Register caregiver – guardian & admin
                 if (isGuardian || isAdmin)
                   ListTile(
                     leading: const Icon(Icons.person_add),
                     title: const Text('Register a caregiver'),
                     subtitle: const Text(
-                        'Add a new caregiver profile (address & NIC stored for admin use)'),
-                    onTap: () {
-                      Navigator.pushNamed(context, '/register-caregiver');
-                    },
+                      'Add a new caregiver profile (address & NIC stored for admin use)',
+                    ),
+                    onTap: () => Navigator.pushNamed(context, '/register-caregiver'),
                   ),
 
-                //  Medication reminders – guardian & senior
                 if (isGuardian || isSenior)
                   const ListTile(
                     leading: Icon(Icons.medication),
                     title: Text('Medication reminders'),
-                    subtitle: Text(
-                        'Manage or view medication schedules for the senior'),
-                    // TODO: navigate to medication reminders screen
+                    subtitle: Text('Manage or view medication schedules for the senior'),
                   ),
 
-                //  Emergency contacts – guardian & senior
                 if (isGuardian || isSenior)
                   const ListTile(
                     leading: Icon(Icons.sos),
                     title: Text('Emergency contacts'),
-                    subtitle: Text(
-                        'Store emergency contact details for quick access'),
-                    // TODO: navigate to emergency contacts screen
+                    subtitle: Text('Store emergency contact details for quick access'),
                   ),
 
-                //  Caregiver dashboard – for caregiver accounts
                 if (isCaregiver)
                   ListTile(
                     leading: const Icon(Icons.assignment_ind),
                     title: const Text('My caregiver dashboard'),
                     subtitle: const Text('View status, complete profile, upload verification'),
-                    onTap: () {
-                      Navigator.pushNamed(context, '/caregiverDashboard');
-                    },
+                    onTap: () => Navigator.pushNamed(context, '/caregiverDashboard'),
                   ),
 
-                //  Hidden admin tools – only for you (set isAdmin: true in Firestore)
                 if (isAdmin)
                   const ListTile(
                     leading: Icon(Icons.admin_panel_settings),
                     title: Text('Admin tools'),
-                    subtitle: Text(
-                        'Developer-only view to manage full caregiver data'),
-                    // TODO: navigate to admin management screen
+                    subtitle: Text('Developer-only view to manage full caregiver data'),
                   ),
               ],
             ),

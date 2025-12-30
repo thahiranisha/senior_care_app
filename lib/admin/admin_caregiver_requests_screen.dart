@@ -5,16 +5,23 @@ import 'admin_caregiver_request_detail_screen.dart';
 
 enum CaregiverRequestFilter { pending, verified, rejected, blocked }
 
-class AdminCaregiverRequestsScreen extends StatelessWidget {
+class AdminCaregiverRequestsScreen extends StatefulWidget {
   final CaregiverRequestFilter filter;
   const AdminCaregiverRequestsScreen({super.key, required this.filter});
+
+  @override
+  State<AdminCaregiverRequestsScreen> createState() => _AdminCaregiverRequestsScreenState();
+}
+
+class _AdminCaregiverRequestsScreenState extends State<AdminCaregiverRequestsScreen> {
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _stream;
 
   Query<Map<String, dynamic>> _query() {
     final col = FirebaseFirestore.instance.collection('caregivers');
 
-    switch (filter) {
+    switch (widget.filter) {
       case CaregiverRequestFilter.pending:
-      // ✅ supports legacy "PENDING" + new "PENDING_VERIFICATION"
+        // supports legacy "PENDING" + new "PENDING_VERIFICATION"
         return col.where('status', whereIn: ['PENDING_VERIFICATION', 'PENDING']);
       case CaregiverRequestFilter.verified:
         return col.where('status', isEqualTo: 'VERIFIED');
@@ -26,7 +33,7 @@ class AdminCaregiverRequestsScreen extends StatelessWidget {
   }
 
   String _title() {
-    switch (filter) {
+    switch (widget.filter) {
       case CaregiverRequestFilter.pending:
         return 'Pending Requests';
       case CaregiverRequestFilter.verified:
@@ -39,11 +46,25 @@ class AdminCaregiverRequestsScreen extends StatelessWidget {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _stream = _query().snapshots();
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminCaregiverRequestsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.filter != widget.filter) {
+      _stream = _query().snapshots();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(_title())),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: _query().snapshots(),
+        stream: _stream,
         builder: (context, snap) {
           if (snap.hasError) return Center(child: Text('Error: ${snap.error}'));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());

@@ -15,10 +15,22 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
     with SingleTickerProviderStateMixin {
   late final TabController _tab;
 
+  // Cache queries once (Flutter Web stability)
+  late final Query<Map<String, dynamic>> _pendingQuery;
+  late final Query<Map<String, dynamic>> _verifiedQuery;
+  late final Query<Map<String, dynamic>> _blockedQuery;
+  late final Query<Map<String, dynamic>> _rejectedQuery;
+
   @override
   void initState() {
     super.initState();
     _tab = TabController(length: 4, vsync: this);
+
+    final col = FirebaseFirestore.instance.collection('caregivers');
+    _pendingQuery = col.where('status', isEqualTo: 'PENDING_VERIFICATION');
+    _verifiedQuery = col.where('status', isEqualTo: 'VERIFIED');
+    _blockedQuery = col.where('status', isEqualTo: 'BLOCKED');
+    _rejectedQuery = col.where('status', isEqualTo: 'REJECTED');
   }
 
   @override
@@ -119,22 +131,6 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
 
   @override
   Widget build(BuildContext context) {
-    final pendingQuery = FirebaseFirestore.instance
-        .collection('caregivers')
-        .where('status', isEqualTo: 'PENDING_VERIFICATION');
-
-    final verifiedQuery = FirebaseFirestore.instance
-        .collection('caregivers')
-        .where('status', isEqualTo: 'VERIFIED');
-
-    final blockedQuery = FirebaseFirestore.instance
-        .collection('caregivers')
-        .where('status', isEqualTo: 'BLOCKED');
-
-    final rejectedQuery = FirebaseFirestore.instance
-        .collection('caregivers')
-        .where('status', isEqualTo: 'REJECTED');
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Caregiver Verification'),
@@ -152,7 +148,7 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
         controller: _tab,
         children: [
           _CaregiverList(
-            query: pendingQuery,
+            query: _pendingQuery,
             trailingBuilder: (id, data) => Wrap(
               spacing: 8,
               children: [
@@ -166,14 +162,14 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
             ),
           ),
           _CaregiverList(
-            query: verifiedQuery,
+            query: _verifiedQuery,
             trailingBuilder: (id, data) => OutlinedButton(
               onPressed: () => _block(id),
               child: const Text('Block'),
             ),
           ),
           _CaregiverList(
-            query: rejectedQuery,
+            query: _rejectedQuery,
             trailingBuilder: (id, data) => Wrap(
               spacing: 8,
               children: [
@@ -183,7 +179,7 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
             ),
           ),
           _CaregiverList(
-            query: blockedQuery,
+            query: _blockedQuery,
             trailingBuilder: (id, data) => ElevatedButton(
               onPressed: () => _unblock(id),
               child: const Text('Unblock'),
@@ -195,7 +191,7 @@ class _AdminVerifyCaregiversScreenState extends State<AdminVerifyCaregiversScree
   }
 }
 
-class _CaregiverList extends StatelessWidget {
+class _CaregiverList extends StatefulWidget {
   final Query<Map<String, dynamic>> query;
   final Widget Function(String caregiverId, Map<String, dynamic> data) trailingBuilder;
 
@@ -205,9 +201,30 @@ class _CaregiverList extends StatelessWidget {
   });
 
   @override
+  State<_CaregiverList> createState() => _CaregiverListState();
+}
+
+class _CaregiverListState extends State<_CaregiverList> {
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _stream;
+
+  @override
+  void initState() {
+    super.initState();
+    _stream = widget.query.snapshots();
+  }
+
+  @override
+  void didUpdateWidget(covariant _CaregiverList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.query != widget.query) {
+      _stream = widget.query.snapshots();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: query.snapshots(),
+      stream: _stream,
       builder: (context, snap) {
         if (snap.hasError) return Center(child: Text('Error: ${snap.error}'));
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
@@ -264,7 +281,7 @@ class _CaregiverList extends StatelessWidget {
                       const SizedBox(height: 10),
                       Align(
                         alignment: Alignment.centerRight,
-                        child: trailingBuilder(doc.id, data),
+                        child: widget.trailingBuilder(doc.id, data),
                       ),
                     ],
                   ),

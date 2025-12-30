@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'dialogs/medication_form_dialog.dart';
 import 'models/medication.dart';
 
-class GuardianMedicationsScreen extends StatelessWidget {
+class GuardianMedicationsScreen extends StatefulWidget {
   final String seniorId;
   final String seniorName;
 
@@ -15,11 +15,32 @@ class GuardianMedicationsScreen extends StatelessWidget {
     required this.seniorName,
   });
 
+  @override
+  State<GuardianMedicationsScreen> createState() => _GuardianMedicationsScreenState();
+}
+
+class _GuardianMedicationsScreenState extends State<GuardianMedicationsScreen> {
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _stream;
+
   CollectionReference<Map<String, dynamic>> _medsRef() {
     return FirebaseFirestore.instance
         .collection('seniors')
-        .doc(seniorId)
+        .doc(widget.seniorId)
         .collection('medications');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _stream = _medsRef().orderBy('createdAt', descending: true).snapshots();
+  }
+
+  @override
+  void didUpdateWidget(covariant GuardianMedicationsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.seniorId != widget.seniorId) {
+      _stream = _medsRef().orderBy('createdAt', descending: true).snapshots();
+    }
   }
 
   Future<void> _add(BuildContext context) async {
@@ -85,11 +106,9 @@ class GuardianMedicationsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final query = _medsRef().orderBy('createdAt', descending: true);
-
     return Scaffold(
       appBar: AppBar(
-        title: Text('Medications • $seniorName'),
+        title: Text('Medications • ${widget.seniorName}'),
         backgroundColor: Colors.teal,
         foregroundColor: Colors.white,
       ),
@@ -102,15 +121,13 @@ class GuardianMedicationsScreen extends StatelessWidget {
         label: const Text('Add medication'),
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: query.snapshots(),
+        stream: _stream,
         builder: (context, snap) {
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
           final docs = snap.data!.docs;
 
           if (docs.isEmpty) {
-            return const Center(
-              child: Text('No medications added yet. Tap "Add medication".'),
-            );
+            return const Center(child: Text('No medications added yet. Tap "Add medication".'));
           }
 
           final meds = docs.map((d) => Medication.fromDoc(d)).toList();

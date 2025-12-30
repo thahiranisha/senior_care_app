@@ -2,25 +2,40 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-class GuardianRequestsScreen extends StatelessWidget {
+class GuardianRequestsScreen extends StatefulWidget {
   const GuardianRequestsScreen({super.key});
 
   @override
+  State<GuardianRequestsScreen> createState() => _GuardianRequestsScreenState();
+}
+
+class _GuardianRequestsScreenState extends State<GuardianRequestsScreen> {
+  User? _user;
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _stream;
+
+  @override
+  void initState() {
+    super.initState();
+    _user = FirebaseAuth.instance.currentUser;
+    if (_user != null) {
+      _stream = FirebaseFirestore.instance
+          .collection('care_requests')
+          .where('guardianId', isEqualTo: _user!.uid)
+          .orderBy('createdAt', descending: true)
+          .snapshots();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
+    if (_user == null || _stream == null) {
       return const Scaffold(body: Center(child: Text('Please login.')));
     }
-
-    final q = FirebaseFirestore.instance
-        .collection('care_requests')
-        .where('guardianId', isEqualTo: user.uid)
-        .orderBy('createdAt', descending: true);
 
     return Scaffold(
       appBar: AppBar(title: const Text('My Care Requests')),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: q.snapshots(),
+        stream: _stream,
         builder: (context, snap) {
           if (snap.hasError) return Center(child: Text('Error: ${snap.error}'));
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
@@ -47,7 +62,7 @@ class GuardianRequestsScreen extends StatelessWidget {
               final startText = start == null
                   ? '-'
                   : '${start.year}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')} '
-                  '${start.hour.toString().padLeft(2, '0')}:${start.minute.toString().padLeft(2, '0')}';
+                      '${start.hour.toString().padLeft(2, '0')}:${start.minute.toString().padLeft(2, '0')}';
 
               return Card(
                 child: Padding(

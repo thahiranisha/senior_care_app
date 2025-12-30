@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
@@ -11,14 +13,29 @@ class CaregiverSearchScreen extends StatefulWidget {
 }
 
 class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
-  final _cities = const ['All', 'Colombo', 'Galle', 'Kandy', 'Jaffna', 'Matara', 'Kurunegala', 'Negombo'];
+  final _cities = const [
+    'All',
+    'Colombo',
+    'Galle',
+    'Kandy',
+    'Jaffna',
+    'Matara',
+    'Kurunegala',
+    'Negombo',
+  ];
 
   String _selectedCity = 'All';
   String _queryText = '';
 
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _debounce;
+
   bool _loading = true;
   String? _error;
   List<QueryDocumentSnapshot<Map<String, dynamic>>> _docs = [];
+
+  // Prevent concurrent loads (web / firestore sdk can crash when hammered)
+  Future<void>? _loadFuture;
 
   @override
   void initState() {
@@ -26,34 +43,56 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
     _load();
   }
 
-  Future<void> _load() async {
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() {
+    return _loadFuture ??= _doLoad().whenComplete(() => _loadFuture = null);
+  }
+
+  Future<void> _doLoad() async {
+    if (!mounted) return;
+
     setState(() {
       _loading = true;
       _error = null;
     });
 
     try {
-      final qs = await FirebaseFirestore.instance
+      Query<Map<String, dynamic>> q = FirebaseFirestore.instance
           .collection('caregivers')
           .where('status', isEqualTo: 'VERIFIED')
-          .where('isActive', isEqualTo: true)
-          .limit(50)
-          .get();
+          .where('isActive', isEqualTo: true);
 
-      setState(() {
-        _docs = qs.docs;
-      });
-    } catch (e) {
-      setState(() {
-        _error = e.toString();
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-        });
+      // Server-side city filter (reduces downloads)
+      if (_selectedCity != 'All') {
+        q = q.where('city', isEqualTo: _selectedCity);
       }
+
+      final qs = await q.limit(50).get();
+
+      if (!mounted) return;
+      setState(() => _docs = qs.docs);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e.toString());
+    } finally {
+      if (!mounted) return;
+      setState(() => _loading = false);
     }
+  }
+
+  void _onSearchChanged(String v) {
+    // Debounce text search (client-side filter only)
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      setState(() => _queryText = v);
+    });
   }
 
   bool _matchesFilters(Map<String, dynamic> c) {
@@ -61,7 +100,10 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
     final name = (c['fullName'] as String?)?.trim() ?? '';
     final phone = (c['phone'] as String?)?.trim() ?? '';
 
-    final cityOk = _selectedCity == 'All' || city.toLowerCase() == _selectedCity.toLowerCase();
+    // City is already filtered server-side when not All,
+    // but keep this as a safe fallback.
+    final cityOk = _selectedCity == 'All' ||
+        city.toLowerCase() == _selectedCity.toLowerCase();
 
     final q = _queryText.trim().toLowerCase();
     final queryOk = q.isEmpty ||
@@ -84,7 +126,8 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
           actions: [
             IconButton(
               icon: const Icon(Icons.refresh),
-              onPressed: _load,
+              onPressed: _loading ? null : _load,
+              tooltip: 'Refresh',
             ),
           ],
         ),
@@ -95,12 +138,13 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
               child: Column(
                 children: [
                   TextField(
+                    controller: _searchController,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search),
                       hintText: 'Search by name / phone / city',
                       border: OutlineInputBorder(),
                     ),
-                    onChanged: (v) => setState(() => _queryText = v),
+                    onChanged: _onSearchChanged,
                   ),
                   const SizedBox(height: 10),
                   Row(
@@ -110,9 +154,18 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
                       Expanded(
                         child: DropdownButtonFormField<String>(
                           value: _selectedCity,
-                          items: _cities.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                          onChanged: (v) => setState(() => _selectedCity = v ?? 'All'),
-                          decoration: const InputDecoration(border: OutlineInputBorder()),
+                          items: _cities
+                              .map((c) =>
+                              DropdownMenuItem(value: c, child: Text(c)))
+                              .toList(),
+                          onChanged: (v) {
+                            final next = v ?? 'All';
+                            if (next == _selectedCity) return;
+                            setState(() => _selectedCity = next);
+                            _load(); // reload from Firestore with server-side city filter
+                          },
+                          decoration:
+                          const InputDecoration(border: OutlineInputBorder()),
                         ),
                       ),
                     ],
@@ -120,7 +173,6 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
                 ],
               ),
             ),
-
             Expanded(
               child: RefreshIndicator(
                 onRefresh: _load,
@@ -130,7 +182,15 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
                     ? ListView(
                   children: [
                     const SizedBox(height: 80),
-                    Center(child: Text('Failed to load caregivers.\n\n$_error')),
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          'Failed to load caregivers.\n\n$_error',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 12),
                     Center(
                       child: ElevatedButton(
@@ -157,12 +217,14 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
                     : ListView.separated(
                   padding: const EdgeInsets.all(16),
                   itemCount: filtered.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  separatorBuilder: (_, __) =>
+                  const SizedBox(height: 10),
                   itemBuilder: (context, i) {
                     final doc = filtered[i];
                     final c = doc.data();
 
-                    final name = (c['fullName'] as String?) ?? 'Unknown';
+                    final name =
+                        (c['fullName'] as String?) ?? 'Unknown';
                     final city = (c['city'] as String?) ?? '';
                     final phone = (c['phone'] as String?) ?? '';
                     final exp = c['experienceYears'];
@@ -175,7 +237,9 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => CaregiverPublicProfileScreen(caregiverId: doc.id),
+                              builder: (_) => CaregiverPublicProfileScreen(
+                                caregiverId: doc.id,
+                              ),
                             ),
                           );
                         },
@@ -186,11 +250,15 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
                             children: [
                               Expanded(
                                 child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  crossAxisAlignment:
+                                  CrossAxisAlignment.start,
                                   children: [
                                     Text(
                                       name,
-                                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
                                     const SizedBox(height: 6),
                                     if (city.isNotEmpty) Text('City: $city'),
@@ -201,7 +269,8 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
                                 ),
                               ),
                               const SizedBox(width: 8),
-                              Icon(Icons.chevron_right, color: Colors.grey.shade700),
+                              Icon(Icons.chevron_right,
+                                  color: Colors.grey.shade700),
                             ],
                           ),
                         ),
