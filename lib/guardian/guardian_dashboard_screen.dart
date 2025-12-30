@@ -2,11 +2,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'dialogs/register_senior_dialog.dart';
-import 'guardian_dashboard_content.dart';
 import 'dialogs/register_senior_dialog.dart' as reg;
+import 'guardian_bookings_screen.dart';
+import 'guardian_dashboard_content.dart';
 import 'models/senior_registration_data.dart';
-
 
 class GuardianDashboardScreen extends StatefulWidget {
   const GuardianDashboardScreen({super.key});
@@ -21,16 +20,17 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
 
   String? _selectedSeniorId;
 
-  // Cache user stream once (Flutter Web stability)
+  // streams cached (Flutter web stability)
   Stream<DocumentSnapshot<Map<String, dynamic>>>? _userDocStream;
+  Stream<DocumentSnapshot<Map<String, dynamic>>>? _guardianDocStream;
 
-  // Cache senior docs (id -> senior doc)
+  // senior cache
   final Map<String, Map<String, dynamic>> _seniorCache = {};
   bool _loadingCache = false;
   String _cacheKey = '';
 
   // -------------------------------
-  // LOGOUT (confirm)
+  // LOGOUT
   // -------------------------------
   Future<void> _logout() async {
     final ok = await showDialog<bool>(
@@ -39,14 +39,8 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
         title: const Text('Logout'),
         content: const Text('Do you want to logout?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Logout'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Logout')),
         ],
       ),
     );
@@ -59,17 +53,15 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
   }
 
   // -------------------------------
-  // REGISTER SENIOR (dialog -> Firestore)
+  // REGISTER SENIOR
   // -------------------------------
   Future<void> _registerSenior(String guardianUid) async {
-    final SeniorRegistrationData? data =
-    await reg.showRegisterSeniorDialog(context);
+    final SeniorRegistrationData? data = await reg.showRegisterSeniorDialog(context);
     if (data == null) return;
 
     try {
       final db = FirebaseFirestore.instance;
 
-      // 1️⃣ Create senior
       final seniorRef = await db.collection('seniors').add({
         ...data.toFirestore(),
         'createdByGuardianId': guardianUid,
@@ -77,7 +69,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
         'isActive': true,
       });
 
-      // 2️⃣ Link senior to guardian
       await db.collection('users').doc(guardianUid).set(
         {
           'linkedSeniorIds': FieldValue.arrayUnion([seniorRef.id]),
@@ -86,15 +77,11 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
         SetOptions(merge: true),
       );
 
-      debugPrint('✅ Senior saved: ${seniorRef.id}');
       _snack('Senior registered successfully');
-    } catch (e, st) {
-      debugPrint('❌ Firestore error: $e');
-      debugPrint('$st');
-      _snack('Failed to register senior');
+    } catch (e) {
+      _snack('Failed to register senior: $e');
     }
   }
-
 
   // -------------------------------
   // UNLINK SENIOR
@@ -106,14 +93,8 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
         title: const Text('Remove senior'),
         content: const Text('Remove this senior from your account?'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remove'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
         ],
       ),
     );
@@ -138,7 +119,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
   }
 
   // -------------------------------
-  // Cache seniors once when ids change
+  // CACHE SENIORS
   // -------------------------------
   Future<void> _ensureCache(List<String> ids) async {
     if (_loadingCache) return;
@@ -175,8 +156,10 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     }
 
     final uid = currentUser.uid;
-    // Create once per uid to avoid repeated subscribe/unsubscribe on web.
+
+    // cache streams once
     _userDocStream ??= FirebaseFirestore.instance.collection('users').doc(uid).snapshots();
+    _guardianDocStream ??= FirebaseFirestore.instance.collection('guardians').doc(uid).snapshots();
 
     return Scaffold(
       backgroundColor: _bgColor,
@@ -185,218 +168,270 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
         foregroundColor: Colors.white,
         title: const Text('Guardian Dashboard'),
         actions: [
-          IconButton(
-            tooltip: 'Logout',
-            onPressed: _logout,
-            icon: const Icon(Icons.logout),
-          ),
+          IconButton(tooltip: 'Logout', onPressed: _logout, icon: const Icon(Icons.logout)),
         ],
       ),
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: _userDocStream,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
-          }
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
+        builder: (context, userSnap) {
+          if (userSnap.hasError) return Center(child: Text('Error: ${userSnap.error}'));
+          if (!userSnap.hasData) return const Center(child: CircularProgressIndicator());
 
-          final data = snapshot.data!.data() ?? {};
-          final role = (data['role'] as String?) ?? '';
+          final userData = userSnap.data!.data() ?? {};
+          final role = (userData['role'] as String?) ?? '';
           if (role != 'guardian') {
             return const Center(child: Text('Access denied (guardian only).'));
           }
 
-          final fullName = (data['fullName'] as String?) ?? 'Guardian';
-          final ids = ((data['linkedSeniorIds'] ?? []) as List).map((e) => e.toString()).toList();
+          final fullName = (userData['fullName'] as String?) ?? 'Guardian';
+          final ids = ((userData['linkedSeniorIds'] ?? []) as List).map((e) => e.toString()).toList();
 
-          // load cache once when ids change
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _ensureCache(ids);
-          });
+          // cache seniors when ids change
+          WidgetsBinding.instance.addPostFrameCallback((_) => _ensureCache(ids));
 
-          // ✅ keep selected id valid (without messy build-time changes)
-          if (ids.isNotEmpty) {
-            final desired = (_selectedSeniorId != null && ids.contains(_selectedSeniorId))
-                ? _selectedSeniorId
-                : ids.first;
+          return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: _guardianDocStream,
+            builder: (context, gSnap) {
+              if (gSnap.hasError) return Center(child: Text('Error: ${gSnap.error}'));
+              if (!gSnap.hasData) return const Center(child: CircularProgressIndicator());
 
-            if (desired != _selectedSeniorId) {
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!mounted) return;
-                setState(() => _selectedSeniorId = desired);
-              });
-            }
-          }
+              final g = gSnap.data!.data() ?? {};
+              final phone = (g['phone'] as String?)?.trim() ?? '';
 
-          // Empty state
-          if (ids.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Card(
-                  elevation: 2,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+              // -------------------
+              // EMPTY STATE: no seniors
+              // -------------------
+              if (ids.isEmpty) {
+                return Center(
                   child: Padding(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            color: _themeColor.withOpacity(0.10),
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                          child: const Icon(Icons.people_alt_outlined, size: 40, color: _themeColor),
-                        ),
-                        const SizedBox(height: 14),
-                        Text(
-                          'Hello, $fullName',
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          'No seniors linked yet.\nRegister a senior to start monitoring.',
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 16),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _themeColor,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.all(20),
+                    child: Card(
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(18),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 72,
+                              height: 72,
+                              decoration: BoxDecoration(
+                                color: _themeColor.withOpacity(0.10),
+                                borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: const Icon(Icons.people_alt_outlined, size: 40, color: _themeColor),
                             ),
-                            onPressed: () => _registerSenior(uid),
-                            icon: const Icon(Icons.person_add_alt_1),
-                            label: const Text('Register Senior'),
+                            const SizedBox(height: 14),
+                            Text('Hello, $fullName',
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                            const SizedBox(height: 6),
+                            Text(phone.isEmpty ? 'Contact: Not set' : 'Contact: $phone'),
+                            const SizedBox(height: 10),
+                            if (phone.isEmpty)
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: () => Navigator.pushNamed(context, '/guardianProfileEdit'),
+                                  icon: const Icon(Icons.phone),
+                                  label: const Text('Add contact number'),
+                                ),
+                              ),
+                            const SizedBox(height: 10),
+                            const Text(
+                              'No seniors linked yet.\nRegister a senior to start monitoring.',
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _themeColor,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                ),
+                                onPressed: () => _registerSenior(uid),
+                                icon: const Icon(Icons.person_add_alt_1),
+                                label: const Text('Register Senior'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }
+
+              // -------------------
+              // Selected senior must be valid
+              // -------------------
+              final String chosenId = (_selectedSeniorId != null && ids.contains(_selectedSeniorId))
+                  ? _selectedSeniorId!
+                  : ids.first;
+
+              if (chosenId != _selectedSeniorId) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  setState(() => _selectedSeniorId = chosenId);
+                });
+              }
+
+              final senior = _seniorCache[chosenId] ?? {};
+              final seniorName =
+                  (senior['fullName'] as String?) ?? (senior['name'] as String?) ?? 'Senior';
+              final seniorsCount = ids.length;
+
+              // -------------------
+              // MAIN UI
+              // -------------------
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                children: [
+                  // Header card
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: _themeColor,
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Row(
+                      children: [
+                        const CircleAvatar(
+                          radius: 24,
+                          backgroundColor: Colors.white,
+                          child: Icon(Icons.elderly, color: _themeColor),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Hello, $fullName',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                phone.isEmpty ? 'Contact: Not set' : 'Contact: $phone',
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Selected: $seniorName • Seniors: $seniorsCount',
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                              if (phone.isEmpty) ...[
+                                const SizedBox(height: 10),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.white,
+                                      side: const BorderSide(color: Colors.white70),
+                                    ),
+                                    onPressed: () => Navigator.pushNamed(context, '/guardianProfileEdit'),
+                                    icon: const Icon(Icons.phone),
+                                    label: const Text('Add contact number'),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
+                        ),
+                        IconButton(
+                          tooltip: 'Register Senior',
+                          onPressed: () => _registerSenior(uid),
+                          icon: const Icon(Icons.person_add_alt_1, color: Colors.white),
                         ),
                       ],
                     ),
                   ),
-                ),
-              ),
-            );
-          }
 
-          final selectedId = _selectedSeniorId ?? ids.first;
-          final senior = _seniorCache[selectedId] ?? {};
-          final seniorName =
-              (senior['fullName'] as String?) ?? (senior['name'] as String?) ?? 'Senior';
+                  const SizedBox(height: 14),
 
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-            children: [
-              // Header card
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: _themeColor,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Row(
-                  children: [
-                    const CircleAvatar(
-                      radius: 24,
-                      backgroundColor: Colors.white,
-                      child: Icon(Icons.elderly, color: _themeColor),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
+                  // Senior selector
+                  Card(
+                    elevation: 1.5,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Hello, $fullName',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
+                          const Text(
+                            'Selected Senior',
+                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'Monitoring: $seniorName',
-                            style: const TextStyle(color: Colors.white70),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Register Senior',
-                      onPressed: () => _registerSenior(uid),
-                      icon: const Icon(Icons.person_add_alt_1, color: Colors.white),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 14),
-
-              // Senior selector card
-              Card(
-                elevation: 1.5,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Selected Senior',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<String>(
-                              value: selectedId,
-                              decoration: InputDecoration(
-                                labelText: 'Choose senior',
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: DropdownButtonFormField<String>(
+                                  value: chosenId,
+                                  decoration: InputDecoration(
+                                    labelText: 'Choose senior',
+                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                                  ),
+                                  items: ids.map((id) {
+                                    final s = _seniorCache[id];
+                                    final n = (s?['fullName'] as String?)?.trim();
+                                    return DropdownMenuItem<String>(
+                                      value: id,
+                                      child: Text(
+                                        (n != null && n.isNotEmpty) ? n : 'Loading...',
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    );
+                                  }).toList(),
+                                  onChanged: (value) => setState(() => _selectedSeniorId = value),
                                 ),
                               ),
-                              items: ids.map((id) {
-                                final s = _seniorCache[id];
-                                final fullName = (s?['fullName'] as String?)?.trim();
-
-                                return DropdownMenuItem<String>(
-                                  value: id,
-                                  child: Text(
-                                    (fullName != null && fullName.isNotEmpty) ? fullName : 'Loading...',
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                );
-                              }).toList(),
-                              onChanged: (value) => setState(() => _selectedSeniorId = value),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          IconButton(
-                            tooltip: 'Remove selected senior',
-                            onPressed: () => _unlinkSenior(uid, selectedId),
-                            icon: const Icon(Icons.person_remove_alt_1, color: Colors.redAccent),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                tooltip: 'Remove selected senior',
+                                onPressed: () => _unlinkSenior(uid, chosenId),
+                                icon: const Icon(Icons.person_remove_alt_1, color: Colors.redAccent),
+                              ),
+                            ],
                           ),
                         ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
 
-              const SizedBox(height: 14),
+                  const SizedBox(height: 14),
+// My Bookings card
+                  Card(
+                    elevation: 1.5,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                    child: ListTile(
+                      leading: const Icon(Icons.event_note, color: Colors.teal),
+                      title: const Text('My Bookings'),
+                      subtitle: const Text('View your caregiver requests & bookings'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const GuardianBookingsScreen()),
+                        );
+                      },
+                    ),
+                  ),
 
-              // Dashboard content
-              GuardianDashboardContent(seniorId: selectedId),
-            ],
+                  const SizedBox(height: 14),
+
+                  // Dashboard content
+                  GuardianDashboardContent(seniorId: chosenId),
+                ],
+              );
+            },
           );
         },
       ),

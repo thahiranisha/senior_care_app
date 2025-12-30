@@ -21,6 +21,7 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
 
   final _patientName = TextEditingController();
   final _patientAge = TextEditingController();
+  String? _patientGender;
   final _address = TextEditingController();
   final _city = TextEditingController();
   final _notes = TextEditingController();
@@ -76,6 +77,24 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
     return '$d  $h:$m';
   }
 
+  Future<Map<String, dynamic>> _loadGuardianProfile(String uid) async {
+    final gSnap = await FirebaseFirestore.instance.collection('guardians').doc(uid).get();
+    final uSnap = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+
+    final g = gSnap.data() ?? {};
+    final u = uSnap.data() ?? {};
+
+    final name = ((g['fullName'] as String?) ?? (u['fullName'] as String?) ?? '').trim();
+    final phone = ((g['phone'] as String?) ?? '').trim();
+    final nic = ((g['nicNumber'] as String?) ?? '').trim();
+
+    return {
+      'guardianName': name.isEmpty ? 'Guardian' : name,
+      'guardianPhone': phone,
+      'guardianNicNumber': nic,
+    };
+  }
+
   Future<void> _submit() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -97,13 +116,21 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
     setState(() => _submitting = true);
 
     try {
+      final guardianProfile = await _loadGuardianProfile(user.uid);
+
       final req = <String, dynamic>{
         'guardianId': user.uid,
         'caregiverId': widget.caregiverId,
         'caregiverName': widget.caregiverName,
 
+        // ✅ store guardian info INSIDE the request
+        'guardianName': guardianProfile['guardianName'],
+        'guardianPhone': guardianProfile['guardianPhone'],
+        'guardianNicNumber': guardianProfile['guardianNicNumber'],
+
         'patientName': _patientName.text.trim(),
-        'patientAge': int.tryParse(_patientAge.text.trim()) ?? null,
+        'patientAge': int.tryParse(_patientAge.text.trim()),
+        'patientGender': _patientGender,
         'city': _city.text.trim(),
         'address': _address.text.trim(),
         'notes': _notes.text.trim(),
@@ -181,16 +208,32 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
                       controller: _patientAge,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
-                        labelText: 'Patient age',
+                        labelText: 'Patient age *',
                         border: OutlineInputBorder(),
                       ),
                       validator: (v) {
                         final t = v?.trim() ?? '';
-                        if (t.isEmpty) return null; // optional
+                        if (t.isEmpty) return 'Required';
                         final n = int.tryParse(t);
                         if (n == null || n <= 0 || n > 120) return 'Enter valid age';
                         return null;
                       },
+                    ),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String>(
+                      value: _patientGender,
+                      decoration: const InputDecoration(
+                        labelText: 'Patient gender *',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'Male', child: Text('Male')),
+                        DropdownMenuItem(value: 'Female', child: Text('Female')),
+                        DropdownMenuItem(value: 'Other', child: Text('Other')),
+                        DropdownMenuItem(value: 'Prefer not to say', child: Text('Prefer not to say')),
+                      ],
+                      onChanged: _submitting ? null : (v) => setState(() => _patientGender = v),
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
                     ),
                     const SizedBox(height: 10),
                     TextFormField(
@@ -213,7 +256,6 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
                     ),
                     const SizedBox(height: 14),
 
-                    // Scheduling
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
@@ -289,11 +331,7 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
             width: double.infinity,
             child: ElevatedButton.icon(
               icon: _submitting
-                  ? const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.send),
               onPressed: _submitting ? null : _submit,
               label: Text(_submitting ? 'Submitting...' : 'Submit Request'),

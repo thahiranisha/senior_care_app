@@ -74,6 +74,8 @@ class _CaregiverRequestsScreenState extends State<CaregiverRequestsScreen> {
 
               final status = (m['status'] as String?) ?? 'PENDING';
               final patient = (m['patientName'] as String?) ?? '-';
+              final patientAge = m['patientAge'];
+              final patientGender = (m['patientGender'] as String?)?.trim();
               final city = (m['city'] as String?) ?? '';
               final address = (m['address'] as String?) ?? '';
               final notes = (m['notes'] as String?) ?? '';
@@ -114,7 +116,15 @@ class _CaregiverRequestsScreenState extends State<CaregiverRequestsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Patient: $patient', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      Text(
+                        'Patient: $patient'
+                        '${(patientAge != null || (patientGender?.isNotEmpty ?? false)) ? ' (' : ''}'
+                        '${patientAge != null ? 'Age: $patientAge' : ''}'
+                        '${(patientAge != null && (patientGender?.isNotEmpty ?? false)) ? ', ' : ''}'
+                        '${(patientGender?.isNotEmpty ?? false) ? patientGender : ''}'
+                        '${(patientAge != null || (patientGender?.isNotEmpty ?? false)) ? ')' : ''}',
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
                       const SizedBox(height: 6),
                       Text('Start: $startText'),
                       Text('Duration: $duration hours   |   Frequency: $freq'),

@@ -399,6 +399,15 @@ class _CaregiverDashboardScreenState extends State<CaregiverDashboardScreen> {
                           subtitle: const Text('View & accept/reject requests'),
                           onTap: () => Navigator.pushNamed(context, '/caregiverRequests'),
                         ),
+
+                        // Bookings (accepted requests)
+                        const Divider(height: 0),
+                        ListTile(
+                          leading: const Icon(Icons.event_available),
+                          title: const Text('Bookings'),
+                          subtitle: const Text('Track accepted bookings & contact guardian'),
+                          onTap: () => Navigator.pushNamed(context, '/caregiverBookings'),
+                        ),
                       ],
                     ),
                   ),

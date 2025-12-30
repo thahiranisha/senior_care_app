@@ -54,6 +54,8 @@ class _GuardianRequestsScreenState extends State<GuardianRequestsScreen> {
               final caregiverName = (m['caregiverName'] as String?) ?? 'Caregiver';
               final status = (m['status'] as String?) ?? 'PENDING';
               final patient = (m['patientName'] as String?) ?? '-';
+              final patientAge = m['patientAge'];
+              final patientGender = (m['patientGender'] as String?)?.trim();
               final freq = (m['frequency'] as String?) ?? '-';
               final duration = m['durationHours'] ?? '-';
 
@@ -72,7 +74,14 @@ class _GuardianRequestsScreenState extends State<GuardianRequestsScreen> {
                     children: [
                       Text(caregiverName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 6),
-                      Text('Patient: $patient'),
+                      Text(
+                        'Patient: $patient'
+                        '${(patientAge != null || (patientGender?.isNotEmpty ?? false)) ? ' (' : ''}'
+                        '${patientAge != null ? 'Age: $patientAge' : ''}'
+                        '${(patientAge != null && (patientGender?.isNotEmpty ?? false)) ? ', ' : ''}'
+                        '${(patientGender?.isNotEmpty ?? false) ? patientGender : ''}'
+                        '${(patientAge != null || (patientGender?.isNotEmpty ?? false)) ? ')' : ''}',
+                      ),
                       Text('Start: $startText'),
                       Text('Duration: $duration hours   |   Frequency: $freq'),
                       const SizedBox(height: 8),

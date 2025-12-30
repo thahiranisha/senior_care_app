@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'admin/admin_dashboard_screen.dart';
 import 'admin/admin_verify_caregivers_screen.dart';
 import 'caregiver/caregiver_dashboard_screen.dart';
+import 'caregiver/caregiver_bookings_screen.dart';
 import 'caregiver/caregiver_documents_screen.dart';
 import 'caregiver/caregiver_profile_edit_screen.dart';
 import 'caregiver/caregiver_requests_screen.dart';
@@ -15,6 +16,7 @@ import 'common/coming_soon_screen.dart';
 import 'firebase_options.dart';
 import 'guardian/caregiver_public_profile_screen.dart';
 import 'guardian/caregiver_search_screen.dart';
+import 'guardian/guardian_profile_edit_screen.dart';
 import 'guardian/guardian_requests_screen.dart';
 import 'guardian/request_care_screen.dart';
 import 'guardian_dashboard.dart';
@@ -94,9 +96,13 @@ class MyApp extends StatelessWidget {
             caregiverName: args['caregiverName'],
           );
         },
+        '/guardianProfileEdit': (_) => const GuardianProfileEditScreen(),
 
         '/guardianRequests': (context) => const GuardianRequestsScreen(),
         '/caregiverRequests': (context) => const CaregiverRequestsScreen(),
+
+        // Caregiver: bookings tracker (accepted requests)
+        '/caregiverBookings': (context) => const CaregiverBookingsScreen(),
 
         // Public caregiver profile (expects: arguments = caregiverId as String)
         '/caregiverPublicProfile': (context) {
