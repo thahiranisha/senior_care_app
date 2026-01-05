@@ -82,7 +82,13 @@ class MyApp extends StatelessWidget {
         '/caregiverDocuments': (context) => const CaregiverDocumentsScreen(),
 
         // Guardian: Find Caregivers
-        '/caregivers': (context) => const CaregiverSearchScreen(),
+        '/caregivers': (context) {
+          final args = ModalRoute.of(context)?.settings.arguments;
+          final seniorId = (args is Map && args['seniorId'] is String)
+              ? args['seniorId'] as String
+              : null;
+          return CaregiverSearchScreen(seniorId: seniorId);
+        },
 
         // Guardian: placeholder features
         '/guardianAlerts': (context) => const ComingSoonScreen(title: 'Alerts'),
@@ -94,6 +100,7 @@ class MyApp extends StatelessWidget {
           return RequestCareScreen(
             caregiverId: args['caregiverId'],
             caregiverName: args['caregiverName'],
+            seniorId: args['seniorId'],
           );
         },
         '/guardianProfileEdit': (_) => const GuardianProfileEditScreen(),
@@ -107,6 +114,11 @@ class MyApp extends StatelessWidget {
         // Public caregiver profile (expects: arguments = caregiverId as String)
         '/caregiverPublicProfile': (context) {
           final args = ModalRoute.of(context)!.settings.arguments;
+          if (args is Map) {
+            final id = (args['caregiverId'] as String?) ?? '';
+            final seniorId = (args['seniorId'] as String?);
+            return CaregiverPublicProfileScreen(caregiverId: id, seniorId: seniorId);
+          }
           final id = args is String ? args : '';
           return CaregiverPublicProfileScreen(caregiverId: id);
         },

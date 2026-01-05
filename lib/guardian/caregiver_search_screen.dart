@@ -6,7 +6,8 @@ import 'package:flutter/material.dart';
 import 'caregiver_public_profile_screen.dart';
 
 class CaregiverSearchScreen extends StatefulWidget {
-  const CaregiverSearchScreen({super.key});
+  final String? seniorId;
+  const CaregiverSearchScreen({super.key, this.seniorId});
 
   @override
   State<CaregiverSearchScreen> createState() => _CaregiverSearchScreenState();
@@ -239,6 +240,7 @@ class _CaregiverSearchScreenState extends State<CaregiverSearchScreen> {
                             MaterialPageRoute(
                               builder: (_) => CaregiverPublicProfileScreen(
                                 caregiverId: doc.id,
+                                seniorId: widget.seniorId,
                               ),
                             ),
                           );
