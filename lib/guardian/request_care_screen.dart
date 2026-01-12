@@ -5,13 +5,11 @@ import 'package:flutter/material.dart';
 class RequestCareScreen extends StatefulWidget {
   final String caregiverId;
   final String caregiverName;
-  final String? seniorId;
 
   const RequestCareScreen({
     super.key,
     required this.caregiverId,
     required this.caregiverName,
-    this.seniorId,
   });
 
   @override
@@ -28,136 +26,11 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
   final _city = TextEditingController();
   final _notes = TextEditingController();
 
-  bool _loadingSenior = false;
-  String? _seniorLoadError;
-  Map<String, dynamic>? _seniorData;
-
-
   DateTime? _startDateTime;
   int _durationHours = 2;
   String _frequency = 'Once';
 
   bool _submitting = false;
-
-  @override
-  @override
-  void initState() {
-    super.initState();
-    if (widget.seniorId != null && widget.seniorId!.trim().isNotEmpty) {
-      _loadSeniorAndPrefill(widget.seniorId!.trim());
-    }
-  }
-
-  Future<void> _loadSeniorAndPrefill(String seniorId) async {
-    setState(() {
-      _loadingSenior = true;
-      _seniorLoadError = null;
-    });
-
-    try {
-      final snap = await FirebaseFirestore.instance.collection('seniors').doc(seniorId).get();
-      if (!snap.exists) {
-        setState(() {
-          _seniorLoadError = 'Selected senior profile not found.';
-        });
-        return;
-      }
-
-      final data = snap.data() ?? <String, dynamic>{};
-      _seniorData = data;
-      _prefillFromSenior(data);
-    } catch (e) {
-      setState(() {
-        _seniorLoadError = 'Failed to load senior details.';
-      });
-    } finally {
-      if (mounted) {
-        setState(() => _loadingSenior = false);
-      }
-    }
-  }
-
-  void _prefillFromSenior(Map<String, dynamic> s) {
-    final fullName = (s['fullName'] as String?)?.trim() ?? '';
-    if (_patientName.text.trim().isEmpty && fullName.isNotEmpty) {
-      _patientName.text = fullName;
-    }
-
-    // Age from DOB
-    DateTime? dob;
-    final dobVal = s['dob'];
-    if (dobVal is Timestamp) {
-      dob = dobVal.toDate();
-    } else if (dobVal is DateTime) {
-      dob = dobVal;
-    }
-    if (_patientAge.text.trim().isEmpty && dob != null) {
-      _patientAge.text = _calcAge(dob).toString();
-    }
-
-    final gender = (s['gender'] as String?)?.trim();
-    if ((_patientGender == null || _patientGender!.trim().isEmpty) && gender != null && gender.isNotEmpty) {
-      _patientGender = gender;
-    }
-
-    final address = (s['address'] as String?)?.trim() ?? '';
-    if (_address.text.trim().isEmpty && address.isNotEmpty) {
-      _address.text = address;
-    }
-
-    if (_city.text.trim().isEmpty && address.isNotEmpty) {
-      final guessedCity = _guessCityFromAddress(address);
-      if (guessedCity.isNotEmpty) {
-        _city.text = guessedCity;
-      }
-    }
-
-    // Prefill notes with medical + emergency info (only if empty)
-    if (_notes.text.trim().isEmpty) {
-      final mc = (s['medicalConditions'] as String?)?.trim() ?? '';
-      final al = (s['allergies'] as String?)?.trim() ?? '';
-      final meds = (s['currentMedications'] as String?)?.trim() ?? '';
-      final mob = (s['mobilityLevel'] as String?)?.trim() ?? '';
-      final eName = (s['emergencyContactName'] as String?)?.trim() ?? '';
-      final ePhone = (s['emergencyContactPhone'] as String?)?.trim() ?? '';
-      final extra = (s['notes'] as String?)?.trim() ?? '';
-
-      final parts = <String>[];
-      if (mc.isNotEmpty) parts.add('Medical conditions: $mc');
-      if (al.isNotEmpty) parts.add('Allergies: $al');
-      if (meds.isNotEmpty) parts.add('Current medications: $meds');
-      if (mob.isNotEmpty) parts.add('Mobility: $mob');
-      if (eName.isNotEmpty || ePhone.isNotEmpty) {
-        parts.add('Emergency contact: ${eName.isEmpty ? '-' : eName}${ePhone.isEmpty ? '' : ' ($ePhone)'}');
-      }
-      if (extra.isNotEmpty) parts.add('Notes: $extra');
-
-      if (parts.isNotEmpty) {
-        _notes.text = parts.join('');
-      }
-    }
-
-    if (mounted) setState(() {});
-  }
-
-  int _calcAge(DateTime dob) {
-    final now = DateTime.now();
-    int age = now.year - dob.year;
-    final hadBirthdayThisYear = (now.month > dob.month) || (now.month == dob.month && now.day >= dob.day);
-    if (!hadBirthdayThisYear) age -= 1;
-    if (age < 0) age = 0;
-    return age;
-  }
-
-  String _guessCityFromAddress(String address) {
-    // Simple heuristic: take last comma-separated token
-    final parts = address.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
-    if (parts.length >= 2) {
-      return parts.last;
-    }
-    return '';
-  }
-
 
   @override
   void dispose() {
@@ -223,13 +96,6 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
   }
 
   Future<void> _submit() async {
-    if (_loadingSenior) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Loading senior details… please wait.')),
-      );
-      return;
-    }
-
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -256,27 +122,11 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
         'guardianId': user.uid,
         'caregiverId': widget.caregiverId,
         'caregiverName': widget.caregiverName,
-        'seniorId': widget.seniorId,
 
         // ✅ store guardian info INSIDE the request
         'guardianName': guardianProfile['guardianName'],
         'guardianPhone': guardianProfile['guardianPhone'],
         'guardianNicNumber': guardianProfile['guardianNicNumber'],
-
-        // Optional: snapshot some senior info for caregiver convenience
-        if (_seniorData != null) ...{
-          'seniorFullName': _seniorData!['fullName'],
-          'seniorDob': _seniorData!['dob'],
-          'seniorPhone': _seniorData!['phone'],
-          'seniorAddress': _seniorData!['address'],
-          'seniorEmergencyContactName': _seniorData!['emergencyContactName'],
-          'seniorEmergencyContactPhone': _seniorData!['emergencyContactPhone'],
-          'seniorMedicalConditions': _seniorData!['medicalConditions'],
-          'seniorAllergies': _seniorData!['allergies'],
-          'seniorCurrentMedications': _seniorData!['currentMedications'],
-          'seniorMobilityLevel': _seniorData!['mobilityLevel'],
-          'seniorNotes': _seniorData!['notes'],
-        },
 
         'patientName': _patientName.text.trim(),
         'patientAge': int.tryParse(_patientAge.text.trim()),
@@ -338,54 +188,6 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
           ),
           const SizedBox(height: 12),
 
-          if (widget.seniorId != null) ...[
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.person, size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Selected Senior (auto-filled)',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleSmall
-                                ?.copyWith(fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        if (_loadingSenior) const SizedBox(width: 16),
-                        if (_loadingSenior)
-                          const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    if (_seniorLoadError != null)
-                      Text(
-                        _seniorLoadError!,
-                        style: const TextStyle(color: Colors.red),
-                      )
-                    else if (_seniorData != null) ...[
-                      Text('Name: ${(_seniorData!['fullName'] as String?) ?? '-'}'),
-                      const SizedBox(height: 2),
-                      Text('Gender: ${(_seniorData!['gender'] as String?) ?? '-'}'),
-                    ] else
-                      const Text('Loading senior details…'),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
-
           Form(
             key: _formKey,
             child: Card(
@@ -395,8 +197,6 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
                   children: [
                     TextFormField(
                       controller: _patientName,
-                      readOnly: widget.seniorId != null,
-                      enabled: !_submitting && !_loadingSenior,
                       decoration: const InputDecoration(
                         labelText: 'Patient name',
                         border: OutlineInputBorder(),
@@ -406,8 +206,6 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
                     const SizedBox(height: 10),
                     TextFormField(
                       controller: _patientAge,
-                      readOnly: widget.seniorId != null,
-                      enabled: !_submitting && !_loadingSenior,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
                         labelText: 'Patient age *',
@@ -434,13 +232,12 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
                         DropdownMenuItem(value: 'Other', child: Text('Other')),
                         DropdownMenuItem(value: 'Prefer not to say', child: Text('Prefer not to say')),
                       ],
-                      onChanged: (_submitting || _loadingSenior) ? null : (v) => setState(() => _patientGender = v),
+                      onChanged: _submitting ? null : (v) => setState(() => _patientGender = v),
                       validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
                     ),
                     const SizedBox(height: 10),
                     TextFormField(
                       controller: _city,
-                      enabled: !_submitting && !_loadingSenior,
                       decoration: const InputDecoration(
                         labelText: 'City',
                         border: OutlineInputBorder(),
@@ -450,8 +247,6 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
                     const SizedBox(height: 10),
                     TextFormField(
                       controller: _address,
-                      readOnly: widget.seniorId != null,
-                      enabled: !_submitting && !_loadingSenior,
                       maxLines: 2,
                       decoration: const InputDecoration(
                         labelText: 'Address',
@@ -519,7 +314,6 @@ class _RequestCareScreenState extends State<RequestCareScreen> {
                     const SizedBox(height: 14),
                     TextFormField(
                       controller: _notes,
-                      enabled: !_submitting && !_loadingSenior,
                       maxLines: 3,
                       decoration: const InputDecoration(
                         labelText: 'Notes (optional)',
