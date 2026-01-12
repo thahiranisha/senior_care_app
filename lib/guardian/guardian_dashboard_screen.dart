@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'dart:math';
+import 'package:flutter/services.dart';
 
 import 'dialogs/register_senior_dialog.dart' as reg;
 import 'guardian_bookings_screen.dart';
@@ -55,6 +57,69 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
   // -------------------------------
   // REGISTER SENIOR
   // -------------------------------
+
+Future<String> _generateUniqueLinkCode(FirebaseFirestore db) async {
+  final rnd = Random.secure();
+
+  // IMPORTANT:
+  // Do NOT query /seniors to check uniqueness, because guardians can only read their own seniors.
+  // Instead, we reserve codes in /link_codes/{code} where the docId IS the code.
+  for (int attempt = 0; attempt < 10; attempt++) {
+    final code = (rnd.nextInt(900000) + 100000).toString(); // 6 digits
+    final snap = await db.collection('link_codes').doc(code).get();
+    if (!snap.exists) return code;
+  }
+
+  // Fallback: last 6 digits of millis (zero-padded)
+  final v = DateTime.now().millisecondsSinceEpoch % 1000000;
+  return v.toString().padLeft(6, '0');
+}
+Future<void> _showLinkCodeDialog({
+  required String seniorName,
+  required String linkCode,
+}) async {
+  if (!mounted) return;
+
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Senior link code'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Give this code to $seniorName to link their login.'),
+          const SizedBox(height: 12),
+          SelectableText(
+            linkCode,
+            style: const TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 2,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: linkCode));
+            if (mounted) {
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(const SnackBar(content: Text('Link code copied')));
+            }
+          },
+          child: const Text('Copy'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+}
+
   Future<void> _registerSenior(String guardianUid) async {
     final SeniorRegistrationData? data = await reg.showRegisterSeniorDialog(context);
     if (data == null) return;
@@ -62,26 +127,56 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     try {
       final db = FirebaseFirestore.instance;
 
-      final seniorRef = await db.collection('seniors').add({
+      // 1) Create the document reference first (no reads)
+      final seniorDoc = db.collection('seniors').doc();
+
+      // 2) Generate a 6-digit code (reserved in /link_codes)
+      final linkCode = await _generateUniqueLinkCode(db);
+
+      // 3) Create senior document
+      await seniorDoc.set({
         ...data.toFirestore(),
         'createdByGuardianId': guardianUid,
+        'guardianId': guardianUid,
         'createdAt': FieldValue.serverTimestamp(),
+
+        // linking fields
+        'linkCode': linkCode,
+        'linkedAuthUid': null,
+        'linked': false,
+        'linkedAt': null,
+
         'isActive': true,
       });
 
+      // 4) Reserve the code -> seniorId mapping
+      await db.collection('link_codes').doc(linkCode).set({
+        'seniorId': seniorDoc.id,
+        'used': false,
+        'usedByUid': null,
+        'createdByGuardianId': guardianUid,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // 5) Add seniorId to guardian user doc
       await db.collection('users').doc(guardianUid).set(
         {
-          'linkedSeniorIds': FieldValue.arrayUnion([seniorRef.id]),
+          'linkedSeniorIds': FieldValue.arrayUnion([seniorDoc.id]),
           'updatedAt': FieldValue.serverTimestamp(),
         },
         SetOptions(merge: true),
       );
 
+      await _showLinkCodeDialog(
+        seniorName: data.fullName,
+        linkCode: linkCode,
+      );
       _snack('Senior registered successfully');
     } catch (e) {
       _snack('Failed to register senior: $e');
     }
   }
+
 
   // -------------------------------
   // UNLINK SENIOR

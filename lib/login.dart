@@ -51,6 +51,8 @@ class _LoginPageState extends State<LoginPage> {
           ? '/guardianDashboard'
           : role == 'caregiver'
           ? '/caregiverDashboard'
+          : role == 'senior'
+          ? '/seniorDashboard'
           : '/home';
 
       if (!mounted) return;
@@ -171,7 +173,7 @@ class _LoginPageState extends State<LoginPage> {
       }
     }
 
-    bool isValidRole(String? r) => r == 'guardian' || r == 'caregiver';
+    bool isValidRole(String? r) => r == 'guardian' || r == 'caregiver' || r == 'senior';
 
     Future<void> ensureAdminDocIfNeeded() async {
       final adminRef = db.collection('admins').doc(uid);
@@ -185,6 +187,9 @@ class _LoginPageState extends State<LoginPage> {
     }
 
     Future<void> ensureRoleDoc(String role) async {
+      // Seniors do not have a role document like guardians/caregivers.
+      // Their profile is created/linked via link-code flow.
+      if (role == 'senior') return;
       if (!isValidRole(role)) return;
 
       final roleCollection = role == 'guardian' ? 'guardians' : 'caregivers';
@@ -274,6 +279,11 @@ class _LoginPageState extends State<LoginPage> {
         // no dialog (your requirement)
         await signOutFully();
         return false; // show UI message: "Profile role missing/invalid. Contact support."
+      }
+
+      if (role == 'senior') {
+        // Senior profiles are created via link-code flow (no guardian/caregiver role doc).
+        return true;
       }
 
       await ensureRoleDoc(role!);
@@ -417,6 +427,20 @@ class _LoginPageState extends State<LoginPage> {
                       onPressed: _isLoading ? null : _loginWithGoogle,
                       icon: const Icon(Icons.account_circle),
                       label: const Text('Sign in with Google'),
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // Senior-friendly entry (Email/Password + Link Code)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _isLoading
+                          ? null
+                          : () => Navigator.pushNamed(context, '/seniorLogin'),
+                      icon: const Icon(Icons.elderly),
+                      label: const Text('Senior Login'),
                     ),
                   ),
 

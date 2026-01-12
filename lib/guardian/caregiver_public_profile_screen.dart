@@ -5,8 +5,7 @@ import 'package:flutter/material.dart';
 
 class CaregiverPublicProfileScreen extends StatefulWidget {
   final String caregiverId;
-  final String? seniorId;
-  const CaregiverPublicProfileScreen({super.key, required this.caregiverId, this.seniorId});
+  const CaregiverPublicProfileScreen({super.key, required this.caregiverId});
 
   @override
   State<CaregiverPublicProfileScreen> createState() => _CaregiverPublicProfileScreenState();
@@ -93,20 +92,12 @@ class _CaregiverPublicProfileScreenState extends State<CaregiverPublicProfileScr
               onPressed: () {
                 final caregiverName = (_data?['fullName'] as String?) ?? 'Caregiver';
 
-                if (widget.seniorId == null || widget.seniorId!.trim().isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Please select a senior first.')),
-                  );
-                  return;
-                }
-
                 Navigator.pushNamed(
                   context,
                   '/requestCare',
                   arguments: {
                     'caregiverId': widget.caregiverId,
                     'caregiverName': caregiverName,
-                    'seniorId': widget.seniorId,
                   },
                 );
               },

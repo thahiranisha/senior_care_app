@@ -136,6 +136,14 @@ class _HomePageState extends State<HomePage> {
                     onTap: () => Navigator.pushNamed(context, '/guardianDashboard'),
                   ),
 
+                if (isSenior)
+                  ListTile(
+                    leading: const Icon(Icons.dashboard_customize),
+                    title: const Text('Senior dashboard'),
+                    subtitle: const Text('View your schedule, reminders and caregiver bookings'),
+                    onTap: () => Navigator.pushNamed(context, '/seniorDashboard'),
+                  ),
+
                 if (isGuardian || isSenior || isAdmin)
                   ListTile(
                     leading: const Icon(Icons.search),

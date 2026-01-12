@@ -23,6 +23,14 @@ import 'guardian_dashboard.dart';
 import 'home.dart';
 import 'login.dart';
 import 'register.dart';
+import 'senior/senior_dashboard_screen.dart';
+import 'senior/senior_bookings_screen.dart';
+import 'senior/senior_checkin_screen.dart';
+import 'senior/senior_emergency_screen.dart';
+import 'senior/senior_medications_screen.dart';
+import 'senior/senior_profile_screen.dart';
+import 'senior/senior_link_code_screen.dart';
+import 'senior/senior_login_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -73,6 +81,43 @@ class MyApp extends StatelessWidget {
         '/register': (context) => const RegisterPage(),
         '/home': (context) => const HomePage(),
 
+        // Senior (Email/Password + Link Code)
+        '/seniorLogin': (context) => const SeniorLoginScreen(),
+        '/seniorLinkCode': (context) => const SeniorLinkCodeScreen(),
+        '/seniorDashboard': (context) => const SeniorDashboardScreen(),
+
+        // Senior feature screens (arguments are passed from dashboard)
+        '/seniorCheckin': (context) {
+          final args = (ModalRoute.of(context)?.settings.arguments as Map?) ?? {};
+          final seniorId = (args['seniorId'] as String?) ?? '';
+          return SeniorCheckinScreen(seniorId: seniorId);
+        },
+        '/seniorEmergency': (context) {
+          final args = (ModalRoute.of(context)?.settings.arguments as Map?) ?? {};
+          return SeniorEmergencyScreen(
+            seniorId: (args['seniorId'] as String?) ?? '',
+            seniorName: (args['seniorName'] as String?) ?? 'Senior',
+          );
+        },
+        '/seniorMedications': (context) {
+          final args = (ModalRoute.of(context)?.settings.arguments as Map?) ?? {};
+          return SeniorMedicationsScreen(
+            seniorId: (args['seniorId'] as String?) ?? '',
+            seniorName: (args['seniorName'] as String?) ?? 'Senior',
+          );
+        },
+        '/seniorBookings': (context) {
+          final args = (ModalRoute.of(context)?.settings.arguments as Map?) ?? {};
+          return SeniorBookingsScreen(
+            guardianId: (args['guardianId'] as String?) ?? '',
+            seniorName: (args['seniorName'] as String?) ?? '',
+          );
+        },
+        '/seniorProfile': (context) {
+          final args = (ModalRoute.of(context)?.settings.arguments as Map?) ?? {};
+          return SeniorProfileScreen(seniorId: (args['seniorId'] as String?) ?? '');
+        },
+
         '/guardianDashboard': (context) => const GuardianDashboardScreen(),
         '/adminDashboard': (context) => const AdminDashboardScreen(),
         '/adminVerifyCaregivers': (context) => const AdminVerifyCaregiversScreen(),
@@ -82,13 +127,7 @@ class MyApp extends StatelessWidget {
         '/caregiverDocuments': (context) => const CaregiverDocumentsScreen(),
 
         // Guardian: Find Caregivers
-        '/caregivers': (context) {
-          final args = ModalRoute.of(context)?.settings.arguments;
-          final seniorId = (args is Map && args['seniorId'] is String)
-              ? args['seniorId'] as String
-              : null;
-          return CaregiverSearchScreen(seniorId: seniorId);
-        },
+        '/caregivers': (context) => const CaregiverSearchScreen(),
 
         // Guardian: placeholder features
         '/guardianAlerts': (context) => const ComingSoonScreen(title: 'Alerts'),
@@ -100,7 +139,6 @@ class MyApp extends StatelessWidget {
           return RequestCareScreen(
             caregiverId: args['caregiverId'],
             caregiverName: args['caregiverName'],
-            seniorId: args['seniorId'],
           );
         },
         '/guardianProfileEdit': (_) => const GuardianProfileEditScreen(),
@@ -114,11 +152,6 @@ class MyApp extends StatelessWidget {
         // Public caregiver profile (expects: arguments = caregiverId as String)
         '/caregiverPublicProfile': (context) {
           final args = ModalRoute.of(context)!.settings.arguments;
-          if (args is Map) {
-            final id = (args['caregiverId'] as String?) ?? '';
-            final seniorId = (args['seniorId'] as String?);
-            return CaregiverPublicProfileScreen(caregiverId: id, seniorId: seniorId);
-          }
           final id = args is String ? args : '';
           return CaregiverPublicProfileScreen(caregiverId: id);
         },
