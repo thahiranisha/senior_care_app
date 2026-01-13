@@ -45,6 +45,7 @@ dependencies:
   firebase_storage: ^13.0.3
   file_picker: ^10.1.2
   url_launcher: ^6.3.0
+  shared_preferences: ^2.2.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

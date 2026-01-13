@@ -2,6 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../common/reminder_cache.dart';
+import '../common/reminder_runner.dart';
+
 class SeniorDashboardScreen extends StatefulWidget {
   const SeniorDashboardScreen({super.key});
 
@@ -19,13 +22,14 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
   String? _seniorId;
   Stream<DocumentSnapshot<Map<String, dynamic>>>? _seniorDocStream;
   Stream<DocumentSnapshot<Map<String, dynamic>>>? _statusStream;
-
-  Stream<DocumentSnapshot<Map<String, dynamic>>>? _medStatsStream;
-
   Stream<QuerySnapshot<Map<String, dynamic>>>? _medicationsStream;
-
   Stream<QuerySnapshot<Map<String, dynamic>>>? _alertsStream;
   Stream<QuerySnapshot<Map<String, dynamic>>>? _activityStream;
+
+  final ReminderCache _reminderCache = ReminderCache();
+  final ReminderRunner _reminderRunner = ReminderRunner();
+
+  bool _remindersSyncedForSenior = false;
 
   @override
   void initState() {
@@ -38,14 +42,25 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
     }
   }
 
+  @override
+  void dispose() {
+    _reminderRunner.stop();
+    super.dispose();
+  }
+
   void _initSeniorStreams(String seniorId) {
     final db = FirebaseFirestore.instance;
+
+    // If senior changes, reset reminder sync + stop old runner
+    if (_seniorId != null && _seniorId != seniorId) {
+      _reminderRunner.stop();
+      _remindersSyncedForSenior = false;
+    }
+
     _seniorId = seniorId;
 
     _seniorDocStream = db.collection('seniors').doc(seniorId).snapshots();
     _statusStream = db.collection('senior_status').doc(seniorId).snapshots();
-
-    _medStatsStream = db.collection('med_stats_today').doc(seniorId).snapshots();
 
     _medicationsStream = db
         .collection('seniors')
@@ -167,7 +182,7 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
       var candidate = DateTime(now.year, now.month, now.day, h, m);
       if (!candidate.isAfter(now)) candidate = candidate.add(const Duration(days: 1));
 
-      if (best == null || candidate.isBefore(best!)) best = candidate;
+      if (best == null || candidate.isBefore(best)) best = candidate;
     }
     return best;
   }
@@ -198,6 +213,7 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
           final role = (u['role'] as String?)?.toLowerCase().trim();
           final seniorId = (u['seniorId'] as String?)?.trim();
 
+          // Not linked -> go link screen
           if (role != 'senior' || seniorId == null || seniorId.isEmpty) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
@@ -206,6 +222,7 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
             return const Center(child: CircularProgressIndicator());
           }
 
+          // Init streams once per seniorId
           if (_seniorId != seniorId || _seniorDocStream == null) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
@@ -213,6 +230,24 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
             });
             return const Center(child: CircularProgressIndicator());
           }
+
+          // Sync reminders ONCE (web timer reminders)
+          if (!_remindersSyncedForSenior) {
+            _remindersSyncedForSenior = true;
+
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              if (!mounted) return;
+
+              await _reminderCache.load();
+              await syncRemindersOnce(seniorId: seniorId!, cache: _reminderCache);
+
+              debugPrint('After sync: cache size = ${_reminderCache.all.length}');
+              debugPrint('Sample keys: ${_reminderCache.all.keys.take(3).toList()}');
+
+              _reminderRunner.start(cache: _reminderCache, context: context);
+            });
+          }
+
 
           return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
             stream: _seniorDocStream,
@@ -233,16 +268,6 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
                 'seniorName': name,
                 'guardianId': guardianId,
               };
-
-              String line(String label, Object? value) {
-                final v = (value == null) ? '' : value.toString().trim();
-                return v.isEmpty ? '' : '$label: $v';
-              }
-
-              final profileLines = <String>[
-                line('City', s['city']),
-                line('Address', s['address']),
-              ].where((e) => e.isNotEmpty).toList();
 
               return ListView(
                 padding: const EdgeInsets.all(16),
@@ -316,6 +341,7 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
                       ),
                       const SizedBox(width: 10),
 
+                      // Medications tile: show NEXT time
                       Expanded(
                         child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                           stream: _medicationsStream,
@@ -346,7 +372,7 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
                             }
 
                             DateTime? bestTime;
-                            String? bestName;
+                            String bestName = '';
 
                             for (final d in valid) {
                               final medName = (d['name'] as String?) ?? 'Medication';
@@ -363,7 +389,7 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
 
                             final subtitle = (bestTime == null)
                                 ? '${valid.length} meds'
-                                : 'Next: ${TimeOfDay.fromDateTime(bestTime!).format(context)}\n${bestName ?? ""}';
+                                : 'Next: ${TimeOfDay.fromDateTime(bestTime!).format(context)}\n$bestName';
 
                             return _actionTile(
                               icon: Icons.medication_outlined,
@@ -410,7 +436,6 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
                       );
                     },
                   ),
-
                 ],
               );
             },
@@ -419,11 +444,54 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
       ),
     );
   }
+}
 
-  Widget _buildActivitySubtitle(BuildContext context, Map<String, dynamic> data) {
-    final type = (data['type'] as String?) ?? 'INFO';
-    final ts = data['time'] as Timestamp?;
-    final timeText = ts == null ? '-' : TimeOfDay.fromDateTime(ts.toDate()).format(context);
-    return Text('$type • $timeText');
+/// Build reminders from Firestore meds and store in local cache.
+/// (Web: used by ReminderRunner to show in-app reminders.)
+Future<void> syncRemindersOnce({
+  required String seniorId,
+  required ReminderCache cache,
+}) async {
+  final snap = await FirebaseFirestore.instance
+      .collection('seniors')
+      .doc(seniorId)
+      .collection('medications')
+      .where('isActive', isEqualTo: true)
+      .get();
+
+  final now = DateTime.now();
+
+  bool validNow(Map<String, dynamic> d) {
+    final sd = d['startDate'];
+    final ed = d['endDate'];
+    final start = (sd is Timestamp) ? sd.toDate() : null;
+    final end = (ed is Timestamp) ? ed.toDate() : null;
+    if (start != null && now.isBefore(start)) return false;
+    if (end != null && now.isAfter(end)) return false;
+    return true;
   }
+
+  final next = <String, Map<String, dynamic>>{};
+
+  for (final doc in snap.docs) {
+    final d = doc.data();
+    if (!validNow(d)) continue;
+
+    final medName = (d['name'] as String?) ?? 'Medication';
+    final times = ((d['times'] ?? []) as List).map((e) => e.toString()).toList();
+
+    for (final t in times) {
+      final key = '$seniorId|${doc.id}|$t';
+      next[key] = {
+        'seniorId': seniorId,
+        'medId': doc.id,
+        'name': medName,
+        'time': t, // "08:00"
+        'enabled': true,
+      };
+    }
+  }
+
+  cache.setAll(next);
+  await cache.save();
 }
