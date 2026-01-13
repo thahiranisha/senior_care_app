@@ -1,7 +1,7 @@
+import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'dart:math';
 import 'package:flutter/services.dart';
 
 import 'dialogs/register_senior_dialog.dart' as reg;
@@ -22,14 +22,10 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
 
   String? _selectedSeniorId;
 
-  // streams cached (Flutter web stability)
   Stream<DocumentSnapshot<Map<String, dynamic>>>? _userDocStream;
-  Stream<DocumentSnapshot<Map<String, dynamic>>>? _guardianDocStream;
 
-  // senior cache
   final Map<String, Map<String, dynamic>> _seniorCache = {};
   bool _loadingCache = false;
-  String _cacheKey = '';
 
   // -------------------------------
   // LOGOUT
@@ -54,71 +50,134 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
   }
 
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  // -------------------------------
+  // LOAD SENIOR NAMES (only when needed)
+  // -------------------------------
+  Future<void> _primeSeniorCache(List<String> ids) async {
+    if (_loadingCache) return;
+
+    final missing = ids.where((id) => !_seniorCache.containsKey(id)).toList();
+    if (missing.isEmpty) return;
+
+    _loadingCache = true;
+    try {
+      final db = FirebaseFirestore.instance;
+      final snaps = await Future.wait(missing.map((id) => db.collection('seniors').doc(id).get()));
+
+      final next = <String, Map<String, dynamic>>{};
+      for (final s in snaps) {
+        next[s.id] = s.data() ?? {};
+      }
+
+      if (!mounted) return;
+      setState(() => _seniorCache.addAll(next));
+    } finally {
+      _loadingCache = false;
+    }
+  }
+
+  // -------------------------------
+  // SENIOR PICKER (Dialog - stable)
+  // -------------------------------
+  Future<void> _pickSenior(BuildContext context, List<String> ids) async {
+    final sorted = List<String>.from(ids)..sort();
+
+    // ✅ load names BEFORE opening the picker (so no setState while list is open)
+    await _primeSeniorCache(sorted);
+
+    if (!mounted) return;
+
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('Select Senior'),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 420,
+            child: ListView.builder(
+              itemCount: sorted.length,
+              itemBuilder: (_, i) {
+                final id = sorted[i];
+                final name = (_seniorCache[id]?['fullName'] as String?)?.trim();
+                final display = (name != null && name.isNotEmpty) ? name : id;
+
+                return ListTile(
+                  title: Text(display, overflow: TextOverflow.ellipsis),
+                  subtitle: (name != null && name.isNotEmpty) ? Text(id) : null,
+                  onTap: () => Navigator.pop(context, id),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          ],
+        );
+      },
+    );
+
+    if (picked != null && mounted) {
+      setState(() => _selectedSeniorId = picked);
+    }
+  }
+
   // -------------------------------
   // REGISTER SENIOR
   // -------------------------------
+  Future<String> _generateUniqueLinkCode(FirebaseFirestore db) async {
+    final rnd = Random.secure();
 
-Future<String> _generateUniqueLinkCode(FirebaseFirestore db) async {
-  final rnd = Random.secure();
+    for (int attempt = 0; attempt < 10; attempt++) {
+      final code = (rnd.nextInt(900000) + 100000).toString(); // 6 digits
+      final snap = await db.collection('link_codes').doc(code).get();
+      if (!snap.exists) return code;
+    }
 
-  // IMPORTANT:
-  // Do NOT query /seniors to check uniqueness, because guardians can only read their own seniors.
-  // Instead, we reserve codes in /link_codes/{code} where the docId IS the code.
-  for (int attempt = 0; attempt < 10; attempt++) {
-    final code = (rnd.nextInt(900000) + 100000).toString(); // 6 digits
-    final snap = await db.collection('link_codes').doc(code).get();
-    if (!snap.exists) return code;
+    final v = DateTime.now().millisecondsSinceEpoch % 1000000;
+    return v.toString().padLeft(6, '0');
   }
 
-  // Fallback: last 6 digits of millis (zero-padded)
-  final v = DateTime.now().millisecondsSinceEpoch % 1000000;
-  return v.toString().padLeft(6, '0');
-}
-Future<void> _showLinkCodeDialog({
-  required String seniorName,
-  required String linkCode,
-}) async {
-  if (!mounted) return;
+  Future<void> _showLinkCodeDialog({
+    required String seniorName,
+    required String linkCode,
+  }) async {
+    if (!mounted) return;
 
-  await showDialog<void>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Senior link code'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Give this code to $seniorName to link their login.'),
-          const SizedBox(height: 12),
-          SelectableText(
-            linkCode,
-            style: const TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 2,
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Senior link code'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Give this code to $seniorName to link their login.'),
+            const SizedBox(height: 12),
+            SelectableText(
+              linkCode,
+              style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, letterSpacing: 2),
             ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: linkCode));
+              if (mounted) _snack('Link code copied');
+            },
+            child: const Text('Copy'),
           ),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('OK')),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () async {
-            await Clipboard.setData(ClipboardData(text: linkCode));
-            if (mounted) {
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(const SnackBar(content: Text('Link code copied')));
-            }
-          },
-          child: const Text('Copy'),
-        ),
-        TextButton(
-          onPressed: () => Navigator.of(ctx).pop(),
-          child: const Text('OK'),
-        ),
-      ],
-    ),
-  );
-}
+    );
+  }
 
   Future<void> _registerSenior(String guardianUid) async {
     final SeniorRegistrationData? data = await reg.showRegisterSeniorDialog(context);
@@ -127,29 +186,21 @@ Future<void> _showLinkCodeDialog({
     try {
       final db = FirebaseFirestore.instance;
 
-      // 1) Create the document reference first (no reads)
       final seniorDoc = db.collection('seniors').doc();
-
-      // 2) Generate a 6-digit code (reserved in /link_codes)
       final linkCode = await _generateUniqueLinkCode(db);
 
-      // 3) Create senior document
       await seniorDoc.set({
         ...data.toFirestore(),
         'createdByGuardianId': guardianUid,
         'guardianId': guardianUid,
         'createdAt': FieldValue.serverTimestamp(),
-
-        // linking fields
         'linkCode': linkCode,
         'linkedAuthUid': null,
         'linked': false,
         'linkedAt': null,
-
         'isActive': true,
       });
 
-      // 4) Reserve the code -> seniorId mapping
       await db.collection('link_codes').doc(linkCode).set({
         'seniorId': seniorDoc.id,
         'used': false,
@@ -158,7 +209,6 @@ Future<void> _showLinkCodeDialog({
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // 5) Add seniorId to guardian user doc
       await db.collection('users').doc(guardianUid).set(
         {
           'linkedSeniorIds': FieldValue.arrayUnion([seniorDoc.id]),
@@ -167,82 +217,19 @@ Future<void> _showLinkCodeDialog({
         SetOptions(merge: true),
       );
 
-      await _showLinkCodeDialog(
-        seniorName: data.fullName,
-        linkCode: linkCode,
-      );
+      // optional: cache immediately so it appears fast
+      await _primeSeniorCache([seniorDoc.id]);
+
+      await _showLinkCodeDialog(seniorName: data.fullName, linkCode: linkCode);
       _snack('Senior registered successfully');
     } catch (e) {
       _snack('Failed to register senior: $e');
     }
   }
 
-
   // -------------------------------
-  // UNLINK SENIOR
+  // UI
   // -------------------------------
-  Future<void> _unlinkSenior(String guardianUid, String seniorId) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Remove senior'),
-        content: const Text('Remove this senior from your account?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
-        ],
-      ),
-    );
-
-    if (ok != true) return;
-
-    try {
-      await FirebaseFirestore.instance.collection('users').doc(guardianUid).update({
-        'linkedSeniorIds': FieldValue.arrayRemove([seniorId]),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      setState(() {
-        _seniorCache.remove(seniorId);
-        if (_selectedSeniorId == seniorId) _selectedSeniorId = null;
-      });
-
-      _snack('Senior removed');
-    } catch (e) {
-      _snack('Failed: $e');
-    }
-  }
-
-  // -------------------------------
-  // CACHE SENIORS
-  // -------------------------------
-  Future<void> _ensureCache(List<String> ids) async {
-    if (_loadingCache) return;
-
-    final key = ids.join('|');
-    if (key == _cacheKey) return;
-
-    _cacheKey = key;
-    _loadingCache = true;
-
-    try {
-      final db = FirebaseFirestore.instance;
-      for (final id in ids) {
-        if (_seniorCache.containsKey(id)) continue;
-        final snap = await db.collection('seniors').doc(id).get();
-        _seniorCache[id] = snap.data() ?? {};
-      }
-      if (mounted) setState(() {});
-    } finally {
-      _loadingCache = false;
-    }
-  }
-
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
-
   @override
   Widget build(BuildContext context) {
     final currentUser = FirebaseAuth.instance.currentUser;
@@ -251,10 +238,7 @@ Future<void> _showLinkCodeDialog({
     }
 
     final uid = currentUser.uid;
-
-    // cache streams once
     _userDocStream ??= FirebaseFirestore.instance.collection('users').doc(uid).snapshots();
-    _guardianDocStream ??= FirebaseFirestore.instance.collection('guardians').doc(uid).snapshots();
 
     return Scaffold(
       backgroundColor: _bgColor,
@@ -279,254 +263,157 @@ Future<void> _showLinkCodeDialog({
           }
 
           final fullName = (userData['fullName'] as String?) ?? 'Guardian';
-          final ids = ((userData['linkedSeniorIds'] ?? []) as List).map((e) => e.toString()).toList();
+          final ids = ((userData['linkedSeniorIds'] ?? []) as List).map((e) => e.toString()).toList()
+            ..sort();
 
-          // cache seniors when ids change
-          WidgetsBinding.instance.addPostFrameCallback((_) => _ensureCache(ids));
-
-          return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            stream: _guardianDocStream,
-            builder: (context, gSnap) {
-              if (gSnap.hasError) return Center(child: Text('Error: ${gSnap.error}'));
-              if (!gSnap.hasData) return const Center(child: CircularProgressIndicator());
-
-              final g = gSnap.data!.data() ?? {};
-              final phone = (g['phone'] as String?)?.trim() ?? '';
-
-              // -------------------
-              // EMPTY STATE: no seniors
-              // -------------------
-              if (ids.isEmpty) {
-                return Center(
+          if (ids.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Card(
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
                   child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Card(
-                      elevation: 2,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(18),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 72,
-                              height: 72,
-                              decoration: BoxDecoration(
-                                color: _themeColor.withOpacity(0.10),
-                                borderRadius: BorderRadius.circular(18),
-                              ),
-                              child: const Icon(Icons.people_alt_outlined, size: 40, color: _themeColor),
-                            ),
-                            const SizedBox(height: 14),
-                            Text('Hello, $fullName',
-                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 6),
-                            Text(phone.isEmpty ? 'Contact: Not set' : 'Contact: $phone'),
-                            const SizedBox(height: 10),
-                            if (phone.isEmpty)
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  onPressed: () => Navigator.pushNamed(context, '/guardianProfileEdit'),
-                                  icon: const Icon(Icons.phone),
-                                  label: const Text('Add contact number'),
-                                ),
-                              ),
-                            const SizedBox(height: 10),
-                            const Text(
-                              'No seniors linked yet.\nRegister a senior to start monitoring.',
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 16),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: _themeColor,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(vertical: 12),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                ),
-                                onPressed: () => _registerSenior(uid),
-                                icon: const Icon(Icons.person_add_alt_1),
-                                label: const Text('Register Senior'),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              }
-
-              // -------------------
-              // Selected senior must be valid
-              // -------------------
-              final String chosenId = (_selectedSeniorId != null && ids.contains(_selectedSeniorId))
-                  ? _selectedSeniorId!
-                  : ids.first;
-
-              if (chosenId != _selectedSeniorId) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  setState(() => _selectedSeniorId = chosenId);
-                });
-              }
-
-              final senior = _seniorCache[chosenId] ?? {};
-              final seniorName =
-                  (senior['fullName'] as String?) ?? (senior['name'] as String?) ?? 'Senior';
-              final seniorsCount = ids.length;
-
-              // -------------------
-              // MAIN UI
-              // -------------------
-              return ListView(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                children: [
-                  // Header card
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: _themeColor,
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                    child: Row(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        const CircleAvatar(
-                          radius: 24,
-                          backgroundColor: Colors.white,
-                          child: Icon(Icons.elderly, color: _themeColor),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Hello, $fullName',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                phone.isEmpty ? 'Contact: Not set' : 'Contact: $phone',
-                                style: const TextStyle(color: Colors.white70),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'Selected: $seniorName • Seniors: $seniorsCount',
-                                style: const TextStyle(color: Colors.white70),
-                              ),
-                              if (phone.isEmpty) ...[
-                                const SizedBox(height: 10),
-                                SizedBox(
-                                  width: double.infinity,
-                                  child: OutlinedButton.icon(
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: Colors.white,
-                                      side: const BorderSide(color: Colors.white70),
-                                    ),
-                                    onPressed: () => Navigator.pushNamed(context, '/guardianProfileEdit'),
-                                    icon: const Icon(Icons.phone),
-                                    label: const Text('Add contact number'),
-                                  ),
-                                ),
-                              ],
-                            ],
+                        Container(
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            color: _themeColor.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(18),
                           ),
+                          child: const Icon(Icons.people_alt_outlined, size: 40, color: _themeColor),
                         ),
-                        IconButton(
-                          tooltip: 'Register Senior',
-                          onPressed: () => _registerSenior(uid),
-                          icon: const Icon(Icons.person_add_alt_1, color: Colors.white),
+                        const SizedBox(height: 14),
+                        Text('Hello, $fullName',
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'No seniors linked yet.\nRegister a senior to start monitoring.',
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _themeColor,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            onPressed: () => _registerSenior(uid),
+                            icon: const Icon(Icons.person_add_alt_1),
+                            label: const Text('Register Senior'),
+                          ),
                         ),
                       ],
                     ),
                   ),
+                ),
+              ),
+            );
+          }
 
-                  const SizedBox(height: 14),
+          final chosenId =
+          (_selectedSeniorId != null && ids.contains(_selectedSeniorId)) ? _selectedSeniorId! : ids.first;
 
-                  // Senior selector
-                  Card(
-                    elevation: 1.5,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                    child: Padding(
-                      padding: const EdgeInsets.all(14),
+          final s = _seniorCache[chosenId];
+          final name = (s?['fullName'] as String?)?.trim();
+          final display = (name != null && name.isNotEmpty) ? name : chosenId;
+
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: _themeColor,
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Row(
+                  children: [
+                    const CircleAvatar(
+                      radius: 24,
+                      backgroundColor: Colors.white,
+                      child: Icon(Icons.elderly, color: _themeColor),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Selected Senior',
-                            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                          Text(
+                            'Hello, $fullName',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: DropdownButtonFormField<String>(
-                                  value: chosenId,
-                                  decoration: InputDecoration(
-                                    labelText: 'Choose senior',
-                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                  ),
-                                  items: ids.map((id) {
-                                    final s = _seniorCache[id];
-                                    final n = (s?['fullName'] as String?)?.trim();
-                                    return DropdownMenuItem<String>(
-                                      value: id,
-                                      child: Text(
-                                        (n != null && n.isNotEmpty) ? n : 'Loading...',
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    );
-                                  }).toList(),
-                                  onChanged: (value) => setState(() => _selectedSeniorId = value),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              IconButton(
-                                tooltip: 'Remove selected senior',
-                                onPressed: () => _unlinkSenior(uid, chosenId),
-                                icon: const Icon(Icons.person_remove_alt_1, color: Colors.redAccent),
-                              ),
-                            ],
+                          const SizedBox(height: 6),
+                          Text(
+                            'Selected: $display • Seniors: ${ids.length}',
+                            style: const TextStyle(color: Colors.white70),
                           ),
                         ],
                       ),
                     ),
-                  ),
-
-                  const SizedBox(height: 14),
-// My Bookings card
-                  Card(
-                    elevation: 1.5,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-                    child: ListTile(
-                      leading: const Icon(Icons.event_note, color: Colors.teal),
-                      title: const Text('My Bookings'),
-                      subtitle: const Text('View your caregiver requests & bookings'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const GuardianBookingsScreen()),
-                        );
-                      },
+                    IconButton(
+                      tooltip: 'Register Senior',
+                      onPressed: () => _registerSenior(uid),
+                      icon: const Icon(Icons.person_add_alt_1, color: Colors.white),
                     ),
-                  ),
+                  ],
+                ),
+              ),
 
-                  const SizedBox(height: 14),
+              const SizedBox(height: 14),
 
-                  // Dashboard content
-                  GuardianDashboardContent(seniorId: chosenId),
-                ],
-              );
-            },
+              // Senior selector (tap -> dialog)
+              Card(
+                elevation: 1.5,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                child: ListTile(
+                  title: const Text('Selected Senior'),
+                  subtitle: Text(display, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  trailing: const Icon(Icons.arrow_drop_down),
+                  onTap: () => _pickSenior(context, ids),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // Bookings
+              Card(
+                elevation: 1.5,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                child: ListTile(
+                  leading: const Icon(Icons.event_note, color: Colors.teal),
+                  title: const Text('My Bookings'),
+                  subtitle: const Text('View your caregiver requests & bookings'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const GuardianBookingsScreen()),
+                    );
+                  },
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              KeyedSubtree(
+                key: ValueKey('guardian-content-$chosenId'),
+                child: GuardianDashboardContent(seniorId: chosenId),
+              ),
+
+            ],
           );
         },
       ),

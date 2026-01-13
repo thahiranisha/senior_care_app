@@ -4,17 +4,7 @@ import 'package:flutter/material.dart';
 import 'widgets/action_pill.dart';
 import 'widgets/activity_row.dart';
 import 'widgets/dashboard_tile.dart';
-
 import 'guardian_medications_screen.dart';
-
-/// IMPORTANT (Flutter Web)
-/// ----------------------
-/// Creating new `query.snapshots()` streams inside build (especially nested
-/// StreamBuilders) can cause rapid subscribe/unsubscribe cycles.
-/// On Chrome (Flutter Web), this can surface Firebase JS SDK watch-stream
-/// assertion crashes (e.g., Unexpected state ID: ca9).
-///
-/// Fix: cache all streams once per seniorId.
 
 class GuardianDashboardContent extends StatefulWidget {
   const GuardianDashboardContent({super.key, required this.seniorId});
@@ -28,12 +18,13 @@ class GuardianDashboardContent extends StatefulWidget {
 class _GuardianDashboardContentState extends State<GuardianDashboardContent> {
   static const Color themeColor = Colors.teal;
 
-  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _seniorStream;
-  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _statusStream;
-  late final Stream<DocumentSnapshot<Map<String, dynamic>>> _medStatsStream;
-  late final Stream<QuerySnapshot<Map<String, dynamic>>> _alertsStream;
-  late final Stream<QuerySnapshot<Map<String, dynamic>>> _appointmentsStream;
-  late final Stream<QuerySnapshot<Map<String, dynamic>>> _activityStream;
+  // ✅ NOT final because we set them once per widget instance (new key => new state)
+  late Stream<DocumentSnapshot<Map<String, dynamic>>> _seniorStream;
+  late Stream<DocumentSnapshot<Map<String, dynamic>>> _statusStream;
+  late Stream<DocumentSnapshot<Map<String, dynamic>>> _medStatsStream;
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _alertsStream;
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _appointmentsStream;
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _activityStream;
 
   @override
   void initState() {
@@ -41,14 +32,7 @@ class _GuardianDashboardContentState extends State<GuardianDashboardContent> {
     _initStreams();
   }
 
-  @override
-  void didUpdateWidget(covariant GuardianDashboardContent oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.seniorId != widget.seniorId) {
-      _initStreams();
-    }
-  }
-
+  // ✅ Remove didUpdateWidget completely (we recreate this widget using a key)
   void _initStreams() {
     final db = FirebaseFirestore.instance;
     final seniorId = widget.seniorId;
@@ -101,9 +85,10 @@ class _GuardianDashboardContentState extends State<GuardianDashboardContent> {
       stream: _seniorStream,
       builder: (context, seniorSnap) {
         final seniorData = seniorSnap.data?.data() ?? {};
-        final seniorName = (seniorData['fullName'] as String?) ??
-            (seniorData['name'] as String?) ??
-            'Senior';
+        final seniorName =
+            (seniorData['fullName'] as String?) ??
+                (seniorData['name'] as String?) ??
+                'Senior';
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -126,10 +111,7 @@ class _GuardianDashboardContentState extends State<GuardianDashboardContent> {
                   color: Colors.red.shade50,
                   child: ListTile(
                     leading: const Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
-                    title: Text(
-                      'Latest alert: $type',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
+                    title: Text('Latest alert: $type', style: const TextStyle(fontWeight: FontWeight.bold)),
                     subtitle: Text(message),
                     onTap: () => _openNamed(context, '/guardianAlerts'),
                   ),
@@ -141,85 +123,93 @@ class _GuardianDashboardContentState extends State<GuardianDashboardContent> {
             const Text('Summary', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
 
+            // ✅ REPLACED GridView (sliver) with Wrap (no sliver crash)
             LayoutBuilder(
               builder: (context, c) {
-                final isWide = c.maxWidth > 520;
-                return GridView.count(
-                  crossAxisCount: isWide ? 3 : 2,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 10,
-                  childAspectRatio: isWide ? 2.35 : 1.95,
+                final w = c.maxWidth;
+                final isWide = w > 520;
+                final spacing = 10.0;
+                final cols = isWide ? 3 : 2;
+                final tileW = (w - (spacing * (cols - 1))) / cols;
+
+                return Wrap(
+                  spacing: spacing,
+                  runSpacing: spacing,
                   children: [
-                    // Check-in tile
-                    StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                      stream: _statusStream,
-                      builder: (context, snapshot) {
-                        String subtitle = 'No data';
-                        if (snapshot.hasData && snapshot.data!.data() != null) {
-                          final d = snapshot.data!.data()!;
-                          final lastCheckIn = d['lastCheckIn'] as Timestamp?;
-                          final lastMood = d['lastMood'] as String?;
-                          if (lastCheckIn != null) {
-                            final t = TimeOfDay.fromDateTime(lastCheckIn.toDate());
-                            subtitle = 'Last: ${t.format(context)}\nMood: ${lastMood ?? '-'}';
+                    SizedBox(
+                      width: tileW,
+                      child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                        stream: _statusStream,
+                        builder: (context, snapshot) {
+                          String subtitle = 'No data';
+                          if (snapshot.hasData && snapshot.data!.data() != null) {
+                            final d = snapshot.data!.data()!;
+                            final lastCheckIn = d['lastCheckIn'] as Timestamp?;
+                            final lastMood = d['lastMood'] as String?;
+                            if (lastCheckIn != null) {
+                              final t = TimeOfDay.fromDateTime(lastCheckIn.toDate());
+                              subtitle = 'Last: ${t.format(context)}\nMood: ${lastMood ?? '-'}';
+                            }
                           }
-                        }
 
-                        return DashboardTile(
-                          title: 'Check-in',
-                          subtitle: subtitle,
-                          icon: Icons.favorite_outline,
-                          themeColor: themeColor,
-                          onTap: () => _openNamed(context, '/guardianCheckins'),
-                        );
-                      },
+                          return DashboardTile(
+                            title: 'Check-in',
+                            subtitle: subtitle,
+                            icon: Icons.favorite_outline,
+                            themeColor: themeColor,
+                            onTap: () => _openNamed(context, '/guardianCheckins'),
+                          );
+                        },
+                      ),
                     ),
 
-                    // Medications tile
-                    StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                      stream: _medStatsStream,
-                      builder: (context, snapshot) {
-                        String subtitle = 'No meds today';
-                        if (snapshot.hasData && snapshot.data!.data() != null) {
-                          final d = snapshot.data!.data()!;
-                          final taken = d['taken'] ?? 0;
-                          final total = d['total'] ?? 0;
-                          subtitle = '$taken / $total taken';
-                        }
+                    SizedBox(
+                      width: tileW,
+                      child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                        stream: _medStatsStream,
+                        builder: (context, snapshot) {
+                          String subtitle = 'No meds today';
+                          if (snapshot.hasData && snapshot.data!.data() != null) {
+                            final d = snapshot.data!.data()!;
+                            final taken = d['taken'] ?? 0;
+                            final total = d['total'] ?? 0;
+                            subtitle = '$taken / $total taken';
+                          }
 
-                        return DashboardTile(
-                          title: 'Medications',
-                          subtitle: subtitle,
-                          icon: Icons.medication_outlined,
-                          themeColor: themeColor,
-                          onTap: () => _openMedications(context, seniorName),
-                        );
-                      },
+                          return DashboardTile(
+                            title: 'Medications',
+                            subtitle: subtitle,
+                            icon: Icons.medication_outlined,
+                            themeColor: themeColor,
+                            onTap: () => _openMedications(context, seniorName),
+                          );
+                        },
+                      ),
                     ),
 
-                    // Next visit tile
-                    StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                      stream: _appointmentsStream,
-                      builder: (context, snapshot) {
-                        String subtitle = 'None';
-                        if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
-                          final appt = snapshot.data!.docs.first.data();
-                          final title = (appt['title'] as String?) ?? 'Appointment';
-                          final time = (appt['time'] as Timestamp).toDate();
-                          subtitle =
-                              '$title\n${time.day}/${time.month} • ${TimeOfDay.fromDateTime(time).format(context)}';
-                        }
+                    SizedBox(
+                      width: tileW,
+                      child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                        stream: _appointmentsStream,
+                        builder: (context, snapshot) {
+                          String subtitle = 'None';
+                          if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
+                            final appt = snapshot.data!.docs.first.data();
+                            final title = (appt['title'] as String?) ?? 'Appointment';
+                            final time = (appt['time'] as Timestamp).toDate();
+                            subtitle =
+                            '$title\n${time.day}/${time.month} • ${TimeOfDay.fromDateTime(time).format(context)}';
+                          }
 
-                        return DashboardTile(
-                          title: 'Next Visit',
-                          subtitle: subtitle,
-                          icon: Icons.event,
-                          themeColor: themeColor,
-                          onTap: () => _openNamed(context, '/guardianAppointments'),
-                        );
-                      },
+                          return DashboardTile(
+                            title: 'Next Visit',
+                            subtitle: subtitle,
+                            icon: Icons.event,
+                            themeColor: themeColor,
+                            onTap: () => _openNamed(context, '/guardianAppointments'),
+                          );
+                        },
+                      ),
                     ),
                   ],
                 );
