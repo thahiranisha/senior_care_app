@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../common/reminder_cache.dart';
 import '../common/reminder_runner.dart';
+import '../common/med_reminder_sync.dart';
 
 class SeniorDashboardScreen extends StatefulWidget {
   const SeniorDashboardScreen({super.key});
@@ -239,7 +240,7 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
               if (!mounted) return;
 
               await _reminderCache.load();
-              await syncRemindersOnce(seniorId: seniorId!, cache: _reminderCache);
+              await syncMedicationRemindersForSeniors(seniorIds: [seniorId!], cache: _reminderCache);
 
               debugPrint('After sync: cache size = ${_reminderCache.all.length}');
               debugPrint('Sample keys: ${_reminderCache.all.keys.take(3).toList()}');

@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'caregiver_status.dart';
 import 'caregiver_theme.dart';
+import '../common/med_reminder_sync.dart';
+import '../common/reminder_cache.dart';
+import '../common/reminder_runner.dart';
 
 class CaregiverDashboardScreen extends StatefulWidget {
   const CaregiverDashboardScreen({super.key});
@@ -17,6 +22,16 @@ class _CaregiverDashboardScreenState extends State<CaregiverDashboardScreen> {
   late final Stream<DocumentSnapshot<Map<String, dynamic>>> _userDocStream;
   late final Stream<DocumentSnapshot<Map<String, dynamic>>> _caregiverDocStream;
 
+  // ✅ reminders (in-app SnackBar reminders while app is open)
+  final ReminderCache _reminderCache = ReminderCache();
+  final ReminderRunner _reminderRunner = ReminderRunner();
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _careReqSub;
+  String? _reminderSeniorsKey;
+
+  // Caches to avoid repeatedly querying seniors for the same guardian.
+  final Map<String, List<Map<String, String>>> _guardianSeniorsCache = {};
+  final Map<String, String> _guardianPatientToSeniorId = {}; // key: guardianId|patientNameLower
+
   @override
   void initState() {
     super.initState();
@@ -28,7 +43,111 @@ class _CaregiverDashboardScreenState extends State<CaregiverDashboardScreen> {
       // ✅ Create streams ONCE (important for Flutter web stability)
       _userDocStream = FirebaseFirestore.instance.collection('users').doc(_uid).snapshots();
       _caregiverDocStream = FirebaseFirestore.instance.collection('caregivers').doc(_uid).snapshots();
+
+      _startCaregiverReminderListener(_uid!);
     }
+  }
+
+  @override
+  void dispose() {
+    _careReqSub?.cancel();
+    _reminderRunner.stop();
+    super.dispose();
+  }
+
+  void _startCaregiverReminderListener(String caregiverUid) {
+    // Watch accepted/in-progress care requests for this caregiver.
+    _careReqSub = FirebaseFirestore.instance
+        .collection('care_requests')
+        .where('caregiverId', isEqualTo: caregiverUid)
+        .where('status', whereIn: ['ACCEPTED', 'IN_PROGRESS'])
+        .snapshots()
+        .listen((snap) async {
+      final ids = await _resolveAssignedSeniorIds(snap.docs);
+      _ensureCaregiverRemindersForIds(ids.toList());
+    });
+  }
+
+  Future<Set<String>> _resolveAssignedSeniorIds(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> requests,
+  ) async {
+    final out = <String>{};
+
+    // 1) If seniorId is already present in care_requests, use it.
+    // 2) Otherwise, best-effort resolve via seniors where guardianId matches and fullName matches patientName.
+    for (final r in requests) {
+      final m = r.data();
+      final direct = (m['seniorId'] as String?)?.trim();
+      if (direct != null && direct.isNotEmpty) {
+        out.add(direct);
+        continue;
+      }
+
+      final guardianId = (m['guardianId'] as String?)?.trim() ?? '';
+      final patientName = (m['patientName'] as String?)?.trim() ?? '';
+      if (guardianId.isEmpty || patientName.isEmpty) continue;
+
+      final lookupKey = '${guardianId.toLowerCase()}|${patientName.toLowerCase()}';
+      final cached = _guardianPatientToSeniorId[lookupKey];
+      if (cached != null && cached.isNotEmpty) {
+        out.add(cached);
+        continue;
+      }
+
+      // Load seniors for this guardian (cached per guardianId).
+      var list = _guardianSeniorsCache[guardianId];
+      if (list == null) {
+        final snap = await FirebaseFirestore.instance
+            .collection('seniors')
+            .where('guardianId', isEqualTo: guardianId)
+            .get();
+
+        list = snap.docs
+            .map((d) {
+              final name = (d.data()['fullName'] as String?)?.trim() ?? '';
+              return {
+                'id': d.id,
+                'nameLower': name.toLowerCase(),
+              };
+            })
+            .where((e) => (e['id'] ?? '').isNotEmpty)
+            .toList();
+
+        _guardianSeniorsCache[guardianId] = list;
+      }
+
+      final match = list.firstWhere(
+        (e) => (e['nameLower'] ?? '') == patientName.toLowerCase(),
+        orElse: () => const {},
+      );
+
+      final sid = (match['id'] ?? '').trim();
+      if (sid.isNotEmpty) {
+        _guardianPatientToSeniorId[lookupKey] = sid;
+        out.add(sid);
+      }
+    }
+
+    return out;
+  }
+
+  void _ensureCaregiverRemindersForIds(List<String> seniorIds) {
+    final ids = seniorIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toList()..sort();
+    final key = ids.join(',');
+    if (_reminderSeniorsKey == key) return;
+
+    _reminderSeniorsKey = key;
+    _reminderRunner.stop();
+
+    if (ids.isEmpty) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+
+      await _reminderCache.load();
+      await syncMedicationRemindersForSeniors(seniorIds: ids, cache: _reminderCache);
+      _reminderRunner.start(cache: _reminderCache, context: context);
+    });
   }
 
   Future<void> _logout(BuildContext context) async {

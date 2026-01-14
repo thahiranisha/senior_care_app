@@ -4,9 +4,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../common/reminder_cache.dart';
+import '../common/reminder_runner.dart';
+import '../common/med_reminder_sync.dart';
+
 import 'dialogs/register_senior_dialog.dart' as reg;
 import 'guardian_bookings_screen.dart';
 import 'guardian_dashboard_content.dart';
+import 'guardian_medications_screen.dart'; // ✅ ADD THIS
 import 'models/senior_registration_data.dart';
 
 class GuardianDashboardScreen extends StatefulWidget {
@@ -21,15 +26,21 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
   static const Color _bgColor = Color(0xFFF3FAF9);
 
   String? _selectedSeniorId;
-
   Stream<DocumentSnapshot<Map<String, dynamic>>>? _userDocStream;
 
   final Map<String, Map<String, dynamic>> _seniorCache = {};
   bool _loadingCache = false;
 
-  // -------------------------------
-  // LOGOUT
-  // -------------------------------
+  final ReminderCache _reminderCache = ReminderCache();
+  final ReminderRunner _reminderRunner = ReminderRunner();
+  String? _reminderSeniorsKey;
+
+  @override
+  void dispose() {
+    _reminderRunner.stop();
+    super.dispose();
+  }
+
   Future<void> _logout() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -55,9 +66,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
-  // -------------------------------
-  // LOAD SENIOR NAMES (only when needed)
-  // -------------------------------
   Future<void> _primeSeniorCache(List<String> ids) async {
     if (_loadingCache) return;
 
@@ -81,15 +89,9 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     }
   }
 
-  // -------------------------------
-  // SENIOR PICKER (Dialog - stable)
-  // -------------------------------
   Future<void> _pickSenior(BuildContext context, List<String> ids) async {
     final sorted = List<String>.from(ids)..sort();
-
-    // ✅ load names BEFORE opening the picker (so no setState while list is open)
     await _primeSeniorCache(sorted);
-
     if (!mounted) return;
 
     final picked = await showDialog<String>(
@@ -127,14 +129,11 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     }
   }
 
-  // -------------------------------
-  // REGISTER SENIOR
-  // -------------------------------
   Future<String> _generateUniqueLinkCode(FirebaseFirestore db) async {
     final rnd = Random.secure();
 
     for (int attempt = 0; attempt < 10; attempt++) {
-      final code = (rnd.nextInt(900000) + 100000).toString(); // 6 digits
+      final code = (rnd.nextInt(900000) + 100000).toString();
       final snap = await db.collection('link_codes').doc(code).get();
       if (!snap.exists) return code;
     }
@@ -217,9 +216,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
         SetOptions(merge: true),
       );
 
-      // optional: cache immediately so it appears fast
       await _primeSeniorCache([seniorDoc.id]);
-
       await _showLinkCodeDialog(seniorName: data.fullName, linkCode: linkCode);
       _snack('Senior registered successfully');
     } catch (e) {
@@ -227,9 +224,116 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     }
   }
 
-  // -------------------------------
-  // UI
-  // -------------------------------
+  // ✅ OPEN medication list screen (THIS is the main fix)
+  void _openMedications(String seniorId, String seniorName) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GuardianMedicationsScreen(
+          seniorId: seniorId,
+          seniorName: seniorName,
+        ),
+      ),
+    );
+  }
+
+  bool _isMedValidForToday(Map<String, dynamic> d) {
+    final now = DateTime.now();
+    final dayStart = DateTime(now.year, now.month, now.day);
+    final dayEnd = dayStart.add(const Duration(days: 1)).subtract(const Duration(milliseconds: 1));
+
+    final sd = d['startDate'];
+    final ed = d['endDate'];
+    final start = (sd is Timestamp) ? sd.toDate() : null;
+    final end = (ed is Timestamp) ? ed.toDate() : null;
+
+    final startOk = (start == null) || !start.isAfter(dayEnd);
+    final endOk = (end == null) || !end.isBefore(dayStart);
+    return startOk && endOk;
+  }
+
+  DateTime? _nextDose(DateTime now, List<String> times) {
+    DateTime? best;
+    for (final t in times) {
+      final parts = t.split(':');
+      if (parts.length != 2) continue;
+      final h = int.tryParse(parts[0]);
+      final m = int.tryParse(parts[1]);
+      if (h == null || m == null) continue;
+
+      var candidate = DateTime(now.year, now.month, now.day, h, m);
+      if (!candidate.isAfter(now)) candidate = candidate.add(const Duration(days: 1));
+
+      if (best == null || candidate.isBefore(best)) best = candidate;
+    }
+    return best;
+  }
+
+  Widget _actionTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    Color? color,
+  }) {
+    final c = color ?? _themeColor;
+    return Card(
+      elevation: 1.2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: c.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: c),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 3),
+                    Text(subtitle, style: const TextStyle(color: Colors.black54)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.black45),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _ensureGuardianRemindersForIds(List<String> seniorIds) {
+    final ids = seniorIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toList()..sort();
+    final key = ids.join(',');
+    if (_reminderSeniorsKey == key) return;
+
+    _reminderSeniorsKey = key;
+    _reminderRunner.stop();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+
+      await _reminderCache.load();
+      await syncMedicationRemindersForSeniors(seniorIds: ids, cache: _reminderCache);
+
+      debugPrint('Guardian reminders cache size=${_reminderCache.all.length}');
+      _reminderRunner.start(cache: _reminderCache, context: context);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUser = FirebaseAuth.instance.currentUser;
@@ -263,8 +367,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
           }
 
           final fullName = (userData['fullName'] as String?) ?? 'Guardian';
-          final ids = ((userData['linkedSeniorIds'] ?? []) as List).map((e) => e.toString()).toList()
-            ..sort();
+          final ids = ((userData['linkedSeniorIds'] ?? []) as List).map((e) => e.toString()).toList()..sort();
 
           if (ids.isEmpty) {
             return Center(
@@ -321,9 +424,22 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
           final chosenId =
           (_selectedSeniorId != null && ids.contains(_selectedSeniorId)) ? _selectedSeniorId! : ids.first;
 
+          // best effort cache
+          _primeSeniorCache([chosenId]);
+
+          // reminder runner
+          _ensureGuardianRemindersForIds([chosenId]);
+
           final s = _seniorCache[chosenId];
           final name = (s?['fullName'] as String?)?.trim();
           final display = (name != null && name.isNotEmpty) ? name : chosenId;
+
+          final medsStream = FirebaseFirestore.instance
+              .collection('seniors')
+              .doc(chosenId)
+              .collection('medications')
+              .where('isActive', isEqualTo: true)
+              .snapshots();
 
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -349,11 +465,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                         children: [
                           Text(
                             'Hello, $fullName',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                           ),
                           const SizedBox(height: 6),
                           Text(
@@ -374,7 +486,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
 
               const SizedBox(height: 14),
 
-              // Senior selector (tap -> dialog)
+              // Senior selector
               Card(
                 elevation: 1.5,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
@@ -384,6 +496,67 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                   trailing: const Icon(Icons.arrow_drop_down),
                   onTap: () => _pickSenior(context, ids),
                 ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // ✅ MEDICATIONS TILE (NOW OPENS LIST ALWAYS)
+              StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: medsStream,
+                builder: (context, snap) {
+                  if (!snap.hasData) {
+                    return _actionTile(
+                      icon: Icons.medication_outlined,
+                      title: 'Medications',
+                      subtitle: 'Loading...',
+                      onTap: () => _openMedications(chosenId, display),
+                    );
+                  }
+
+                  final now = DateTime.now();
+
+                  final validToday = snap.data!.docs
+                      .map((d) => d.data())
+                      .where(_isMedValidForToday)
+                      .where((d) => ((d['times'] ?? []) as List).isNotEmpty)
+                      .toList();
+
+                  if (validToday.isEmpty) {
+                    return _actionTile(
+                      icon: Icons.medication_outlined,
+                      title: 'Medications',
+                      subtitle: 'No meds today',
+                      onTap: () => _openMedications(chosenId, display), // ✅ FIX
+                    );
+                  }
+
+                  DateTime? bestTime;
+                  String bestName = '';
+
+                  for (final d in validToday) {
+                    final medName = (d['name'] as String?) ?? 'Medication';
+                    final times = ((d['times'] ?? []) as List).map((e) => e.toString()).toList();
+
+                    final next = _nextDose(now, times);
+                    if (next == null) continue;
+
+                    if (bestTime == null || next.isBefore(bestTime!)) {
+                      bestTime = next;
+                      bestName = medName;
+                    }
+                  }
+
+                  final subtitle = (bestTime == null)
+                      ? '${validToday.length} meds'
+                      : 'Next: ${TimeOfDay.fromDateTime(bestTime!).format(context)}\n$bestName';
+
+                  return _actionTile(
+                    icon: Icons.medication_outlined,
+                    title: 'Medications',
+                    subtitle: subtitle,
+                    onTap: () => _openMedications(chosenId, display), // ✅ FIX
+                  );
+                },
               ),
 
               const SizedBox(height: 14),
@@ -398,10 +571,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                   subtitle: const Text('View your caregiver requests & bookings'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const GuardianBookingsScreen()),
-                    );
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const GuardianBookingsScreen()));
                   },
                 ),
               ),
@@ -412,7 +582,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                 key: ValueKey('guardian-content-$chosenId'),
                 child: GuardianDashboardContent(seniorId: chosenId),
               ),
-
             ],
           );
         },

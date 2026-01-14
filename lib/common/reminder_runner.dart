@@ -39,6 +39,7 @@ class ReminderRunner {
       if (!RegExp(r'^\d{2}:\d{2}$').hasMatch(time)) continue;
 
       final name = (data['name'] as String?) ?? 'Medication';
+      final seniorName = ((data['seniorName'] as String?) ?? '').trim();
 
       final next = _nextOccurrence(now, time);
       final delay = next.difference(now);
@@ -52,7 +53,11 @@ class ReminderRunner {
         // In-app notification (SnackBar)
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Reminder: Take $name ($time)'),
+            content: Text(
+              seniorName.isEmpty
+                  ? 'Reminder: Take $name ($time)'
+                  : 'Reminder for $seniorName: Take $name ($time)',
+            ),
             duration: const Duration(seconds: 6),
           ),
         );
