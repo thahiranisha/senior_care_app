@@ -1,11 +1,10 @@
-// lib/guardian/caregiver_public_profile_screen.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 class CaregiverPublicProfileScreen extends StatefulWidget {
   final String caregiverId;
-  const CaregiverPublicProfileScreen({super.key, required this.caregiverId});
+  final String? seniorId;
+  const CaregiverPublicProfileScreen({super.key, required this.caregiverId, this.seniorId});
 
   @override
   State<CaregiverPublicProfileScreen> createState() => _CaregiverPublicProfileScreenState();
@@ -98,6 +97,7 @@ class _CaregiverPublicProfileScreenState extends State<CaregiverPublicProfileScr
                   arguments: {
                     'caregiverId': widget.caregiverId,
                     'caregiverName': caregiverName,
+                    'seniorId': widget.seniorId,
                   },
                 );
               },

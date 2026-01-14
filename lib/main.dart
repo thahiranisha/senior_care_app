@@ -38,8 +38,6 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-
-  // For Flutter Web: avoid some persistence issues
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: false,
   );
@@ -80,13 +78,9 @@ class MyApp extends StatelessWidget {
         '/login': (context) => const LoginPage(),
         '/register': (context) => const RegisterPage(),
         '/home': (context) => const HomePage(),
-
-        // Senior (Email/Password + Link Code)
         '/seniorLogin': (context) => const SeniorLoginScreen(),
         '/seniorLinkCode': (context) => const SeniorLinkCodeScreen(),
         '/seniorDashboard': (context) => const SeniorDashboardScreen(),
-
-        // Senior feature screens (arguments are passed from dashboard)
         '/seniorCheckin': (context) {
           final args = (ModalRoute.of(context)?.settings.arguments as Map?) ?? {};
           final seniorId = (args['seniorId'] as String?) ?? '';
@@ -125,11 +119,11 @@ class MyApp extends StatelessWidget {
         '/caregiverDashboard': (context) => const CaregiverDashboardScreen(),
         '/caregiverProfileEdit': (context) => const CaregiverProfileEditScreen(),
         '/caregiverDocuments': (context) => const CaregiverDocumentsScreen(),
-
-        // Guardian: Find Caregivers
-        '/caregivers': (context) => const CaregiverSearchScreen(),
-
-        // Guardian: placeholder features
+        '/caregivers': (context) {
+          final args = ModalRoute.of(context)!.settings.arguments;
+          final seniorId = (args is Map) ? (args['seniorId'] as String?) : null;
+          return CaregiverSearchScreen(seniorId: seniorId);
+        },
         '/guardianAlerts': (context) => const ComingSoonScreen(title: 'Alerts'),
         '/guardianCheckins': (context) => const ComingSoonScreen(title: 'Check-ins'),
         '/guardianAppointments': (context) => const ComingSoonScreen(title: 'Appointments'),
@@ -139,21 +133,25 @@ class MyApp extends StatelessWidget {
           return RequestCareScreen(
             caregiverId: args['caregiverId'],
             caregiverName: args['caregiverName'],
+            seniorId: args['seniorId'],
           );
         },
         '/guardianProfileEdit': (_) => const GuardianProfileEditScreen(),
 
         '/guardianRequests': (context) => const GuardianRequestsScreen(),
         '/caregiverRequests': (context) => const CaregiverRequestsScreen(),
-
-        // Caregiver: bookings tracker (accepted requests)
         '/caregiverBookings': (context) => const CaregiverBookingsScreen(),
-
-        // Public caregiver profile (expects: arguments = caregiverId as String)
         '/caregiverPublicProfile': (context) {
           final args = ModalRoute.of(context)!.settings.arguments;
-          final id = args is String ? args : '';
-          return CaregiverPublicProfileScreen(caregiverId: id);
+          String caregiverId = '';
+          String? seniorId;
+          if (args is String) {
+            caregiverId = args;
+          } else if (args is Map) {
+            caregiverId = (args['caregiverId'] as String?) ?? (args['id'] as String?) ?? '';
+            seniorId = args['seniorId'] as String?;
+          }
+          return CaregiverPublicProfileScreen(caregiverId: caregiverId, seniorId: seniorId);
         },
       },
     );
