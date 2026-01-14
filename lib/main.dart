@@ -4,6 +4,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:senior_care_app/guardian/guardian_alerts_screen.dart';
+import 'package:senior_care_app/guardian/guardian_emergency_screen.dart';
 
 import 'admin/admin_dashboard_screen.dart';
 import 'admin/admin_verify_caregivers_screen.dart';
@@ -124,10 +126,17 @@ class MyApp extends StatelessWidget {
           final seniorId = (args is Map) ? (args['seniorId'] as String?) : null;
           return CaregiverSearchScreen(seniorId: seniorId);
         },
-        '/guardianAlerts': (context) => const ComingSoonScreen(title: 'Alerts'),
-        '/guardianCheckins': (context) => const ComingSoonScreen(title: 'Check-ins'),
-        '/guardianAppointments': (context) => const ComingSoonScreen(title: 'Appointments'),
-        '/guardianReminders': (context) => const ComingSoonScreen(title: 'Reminders'),
+        '/guardianAlerts': (context) {
+          final args = (ModalRoute.of(context)?.settings.arguments as Map?) ?? {};
+          final seniorId = (args['seniorId'] as String?) ?? '';
+          return GuardianAlertsScreen(seniorId: seniorId);
+        },
+
+        '/guardianEmergency': (context) {
+          final args = (ModalRoute.of(context)?.settings.arguments as Map?) ?? {};
+          final seniorId = (args['seniorId'] as String?) ?? '';
+          return GuardianEmergencyScreen(seniorId: seniorId);
+        },
         '/requestCare': (context) {
           final args = ModalRoute.of(context)!.settings.arguments as Map;
           return RequestCareScreen(

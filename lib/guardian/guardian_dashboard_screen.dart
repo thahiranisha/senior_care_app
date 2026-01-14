@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -10,9 +12,9 @@ import '../common/med_reminder_sync.dart';
 
 import 'dialogs/register_senior_dialog.dart' as reg;
 import 'guardian_bookings_screen.dart';
-import 'guardian_dashboard_content.dart';
-import 'guardian_medications_screen.dart'; // ✅ ADD THIS
+import 'guardian_medications_screen.dart';
 import 'models/senior_registration_data.dart';
+import 'caregiver_search_screen.dart';
 
 class GuardianDashboardScreen extends StatefulWidget {
   const GuardianDashboardScreen({super.key});
@@ -35,10 +37,32 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
   final ReminderRunner _reminderRunner = ReminderRunner();
   String? _reminderSeniorsKey;
 
+  // ✅ SOS banner logic
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _sosSub;
+  String? _listeningSeniorId;
+  String? _activeSosAlertId; // current SOS alert shown
+  bool _bannerVisible = false;
+
   @override
   void dispose() {
     _reminderRunner.stop();
+    _sosSub?.cancel();
     super.dispose();
+  }
+
+  // -------------------------------
+  // UI helpers
+  // -------------------------------
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  String _fmtTs(Timestamp? ts) {
+    if (ts == null) return '';
+    final d = ts.toDate();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${d.year}-${two(d.month)}-${two(d.day)}  ${two(d.hour)}:${two(d.minute)}';
   }
 
   Future<void> _logout() async {
@@ -61,11 +85,9 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
   }
 
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
-
+  // -------------------------------
+  // Senior cache + picker
+  // -------------------------------
   Future<void> _primeSeniorCache(List<String> ids) async {
     if (_loadingCache) return;
 
@@ -96,32 +118,30 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
 
     final picked = await showDialog<String>(
       context: context,
-      builder: (_) {
-        return AlertDialog(
-          title: const Text('Select Senior'),
-          content: SizedBox(
-            width: double.maxFinite,
-            height: 420,
-            child: ListView.builder(
-              itemCount: sorted.length,
-              itemBuilder: (_, i) {
-                final id = sorted[i];
-                final name = (_seniorCache[id]?['fullName'] as String?)?.trim();
-                final display = (name != null && name.isNotEmpty) ? name : id;
+      builder: (_) => AlertDialog(
+        title: const Text('Select Senior'),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 420,
+          child: ListView.builder(
+            itemCount: sorted.length,
+            itemBuilder: (_, i) {
+              final id = sorted[i];
+              final name = (_seniorCache[id]?['fullName'] as String?)?.trim();
+              final display = (name != null && name.isNotEmpty) ? name : id;
 
-                return ListTile(
-                  title: Text(display, overflow: TextOverflow.ellipsis),
-                  subtitle: (name != null && name.isNotEmpty) ? Text(id) : null,
-                  onTap: () => Navigator.pop(context, id),
-                );
-              },
-            ),
+              return ListTile(
+                title: Text(display, overflow: TextOverflow.ellipsis),
+                subtitle: (name != null && name.isNotEmpty) ? Text(id) : null,
+                onTap: () => Navigator.pop(context, id),
+              );
+            },
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ],
-        );
-      },
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        ],
+      ),
     );
 
     if (picked != null && mounted) {
@@ -129,6 +149,9 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     }
   }
 
+  // -------------------------------
+  // Register senior (same as yours)
+  // -------------------------------
   Future<String> _generateUniqueLinkCode(FirebaseFirestore db) async {
     final rnd = Random.secure();
 
@@ -142,10 +165,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     return v.toString().padLeft(6, '0');
   }
 
-  Future<void> _showLinkCodeDialog({
-    required String seniorName,
-    required String linkCode,
-  }) async {
+  Future<void> _showLinkCodeDialog({required String seniorName, required String linkCode}) async {
     if (!mounted) return;
 
     await showDialog<void>(
@@ -179,7 +199,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
   }
 
   Future<void> _registerSenior(String guardianUid) async {
-    final SeniorRegistrationData? data = await reg.showRegisterSeniorDialog(context);
+    final data = await reg.showRegisterSeniorDialog(context);
     if (data == null) return;
 
     try {
@@ -224,7 +244,9 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     }
   }
 
-  // ✅ OPEN medication list screen (THIS is the main fix)
+  // -------------------------------
+  // Med tile helpers (kept)
+  // -------------------------------
   void _openMedications(String seniorId, String seniorName) {
     Navigator.push(
       context,
@@ -328,12 +350,148 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
 
       await _reminderCache.load();
       await syncMedicationRemindersForSeniors(seniorIds: ids, cache: _reminderCache);
-
-      debugPrint('Guardian reminders cache size=${_reminderCache.all.length}');
       _reminderRunner.start(cache: _reminderCache, context: context);
     });
   }
 
+  // -------------------------------
+  // ✅ SOS Notification (MaterialBanner)
+  // - reads alerts(type=SOS)
+  // - shows banner until guardian dismisses
+  // - uses alerts/{alertId}/acks/{guardianUid}
+  // -------------------------------
+  Future<bool> _isSosAcked(String alertId, String guardianUid) async {
+    final ref = FirebaseFirestore.instance
+        .collection('alerts')
+        .doc(alertId)
+        .collection('acks')
+        .doc(guardianUid);
+    final snap = await ref.get();
+    return snap.exists;
+  }
+
+  Future<void> _ackSos(String alertId, String guardianUid) async {
+    final ref = FirebaseFirestore.instance
+        .collection('alerts')
+        .doc(alertId)
+        .collection('acks')
+        .doc(guardianUid);
+
+    await ref.set({
+      'guardianId': guardianUid,
+      'ackAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  void _hideBanner() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentMaterialBanner();
+    _bannerVisible = false;
+  }
+
+  void _showSosBanner({
+    required String alertId,
+    required String message,
+    required String timeText,
+    required String guardianUid,
+  }) {
+    if (!mounted) return;
+    if (_bannerVisible && _activeSosAlertId == alertId) return;
+
+    _hideBanner();
+    _bannerVisible = true;
+    _activeSosAlertId = alertId;
+
+    ScaffoldMessenger.of(context).showMaterialBanner(
+      MaterialBanner(
+        backgroundColor: Colors.red.shade50,
+        leading: const Icon(Icons.sos_rounded, color: Colors.redAccent),
+        content: Text(
+          'SOS: $message\n$timeText',
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await _ackSos(alertId, guardianUid);
+              _hideBanner();
+            },
+            child: const Text('DISMISS'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _attachSosListener(String seniorId) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    if (_listeningSeniorId == seniorId) return;
+
+    _sosSub?.cancel();
+    _listeningSeniorId = seniorId;
+
+    final db = FirebaseFirestore.instance;
+
+    _sosSub = db
+        .collection('alerts')
+        .where('seniorId', isEqualTo: seniorId)
+        .where('type', isEqualTo: 'SOS')
+        .orderBy('createdAt', descending: true)
+        .limit(1)
+        .snapshots()
+        .listen((snap) async {
+      if (!mounted) return;
+      if (snap.docs.isEmpty) {
+        // No SOS now -> hide banner
+        if (_bannerVisible) _hideBanner();
+        return;
+      }
+
+      final doc = snap.docs.first;
+      final alertId = doc.id;
+
+      final acked = await _isSosAcked(alertId, user.uid);
+      if (acked) {
+        if (_bannerVisible && _activeSosAlertId == alertId) _hideBanner();
+        return;
+      }
+
+      final data = doc.data();
+      final msg = (data['message'] as String?) ?? 'SOS alert';
+      final ts = data['createdAt'] as Timestamp?;
+      final timeText = _fmtTs(ts);
+
+      _showSosBanner(
+        alertId: alertId,
+        message: msg,
+        timeText: timeText,
+        guardianUid: user.uid,
+      );
+    });
+  }
+
+  // -------------------------------
+  // Check-in status source (senior_status/{seniorId})
+  // -------------------------------
+  Stream<DocumentSnapshot<Map<String, dynamic>>> _seniorStatusStream(String seniorId) {
+    return FirebaseFirestore.instance.collection('senior_status').doc(seniorId).snapshots();
+  }
+
+  // -------------------------------
+  // Caregiver search open
+  // -------------------------------
+  void _openCaregivers(String seniorId) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => CaregiverSearchScreen(seniorId: seniorId)),
+    );
+  }
+
+  // -------------------------------
+  // BUILD
+  // -------------------------------
   @override
   Widget build(BuildContext context) {
     final currentUser = FirebaseAuth.instance.currentUser;
@@ -391,13 +549,9 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                           child: const Icon(Icons.people_alt_outlined, size: 40, color: _themeColor),
                         ),
                         const SizedBox(height: 14),
-                        Text('Hello, $fullName',
-                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        Text('Hello, $fullName', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 10),
-                        const Text(
-                          'No seniors linked yet.\nRegister a senior to start monitoring.',
-                          textAlign: TextAlign.center,
-                        ),
+                        const Text('No seniors linked yet.\nRegister a senior to start monitoring.', textAlign: TextAlign.center),
                         const SizedBox(height: 16),
                         SizedBox(
                           width: double.infinity,
@@ -424,11 +578,10 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
           final chosenId =
           (_selectedSeniorId != null && ids.contains(_selectedSeniorId)) ? _selectedSeniorId! : ids.first;
 
-          // best effort cache
+          // cache + reminders + sos listener
           _primeSeniorCache([chosenId]);
-
-          // reminder runner
           _ensureGuardianRemindersForIds([chosenId]);
+          _attachSosListener(chosenId);
 
           final s = _seniorCache[chosenId];
           final name = (s?['fullName'] as String?)?.trim();
@@ -500,7 +653,52 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
 
               const SizedBox(height: 14),
 
-              // ✅ MEDICATIONS TILE (NOW OPENS LIST ALWAYS)
+              // ✅ Check-in status from senior_status/{seniorId}
+              StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: _seniorStatusStream(chosenId),
+                builder: (context, snap) {
+                  if (!snap.hasData) {
+                    return Card(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                      child: const ListTile(
+                        leading: Icon(Icons.favorite_border, color: Colors.orange),
+                        title: Text('Check-in status', style: TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text('Loading...'),
+                      ),
+                    );
+                  }
+
+                  final data = snap.data!.data() ?? {};
+                  final lastCheckIn = data['lastCheckIn'] as Timestamp?;
+                  final mood = (data['lastMood'] as String?)?.trim();
+
+                  if (lastCheckIn == null) {
+                    return Card(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                      child: const ListTile(
+                        leading: Icon(Icons.favorite_border, color: Colors.orange),
+                        title: Text('Check-in status', style: TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text('No check-ins yet'),
+                      ),
+                    );
+                  }
+
+                  final moodText = (mood == null || mood.isEmpty) ? 'Mood: -' : 'Mood: $mood';
+
+                  return Card(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                    child: ListTile(
+                      leading: const Icon(Icons.favorite, color: Colors.orange),
+                      title: const Text('Check-in status', style: TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text('Last: ${_fmtTs(lastCheckIn)}\n$moodText'),
+                    ),
+                  );
+                },
+              ),
+
+              const SizedBox(height: 14),
+
+              // Medications
               StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: medsStream,
                 builder: (context, snap) {
@@ -526,7 +724,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                       icon: Icons.medication_outlined,
                       title: 'Medications',
                       subtitle: 'No meds today',
-                      onTap: () => _openMedications(chosenId, display), // ✅ FIX
+                      onTap: () => _openMedications(chosenId, display),
                     );
                   }
 
@@ -536,7 +734,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                   for (final d in validToday) {
                     final medName = (d['name'] as String?) ?? 'Medication';
                     final times = ((d['times'] ?? []) as List).map((e) => e.toString()).toList();
-
                     final next = _nextDose(now, times);
                     if (next == null) continue;
 
@@ -554,7 +751,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                     icon: Icons.medication_outlined,
                     title: 'Medications',
                     subtitle: subtitle,
-                    onTap: () => _openMedications(chosenId, display), // ✅ FIX
+                    onTap: () => _openMedications(chosenId, display),
                   );
                 },
               ),
@@ -578,9 +775,12 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
 
               const SizedBox(height: 14),
 
-              KeyedSubtree(
-                key: ValueKey('guardian-content-$chosenId'),
-                child: GuardianDashboardContent(seniorId: chosenId),
+              // ✅ Caregiver Search INSIDE dashboard (no extra screen route needed)
+              _actionTile(
+                icon: Icons.search,
+                title: 'Find Caregivers',
+                subtitle: 'Search and request care',
+                onTap: () => _openCaregivers(chosenId),
               ),
             ],
           );
