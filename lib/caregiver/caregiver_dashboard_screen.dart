@@ -22,7 +22,7 @@ class _CaregiverDashboardScreenState extends State<CaregiverDashboardScreen> {
   late final Stream<DocumentSnapshot<Map<String, dynamic>>> _userDocStream;
   late final Stream<DocumentSnapshot<Map<String, dynamic>>> _caregiverDocStream;
 
-  // ✅ reminders (in-app SnackBar reminders while app is open)
+  // reminders (in-app SnackBar reminders while app is open)
   final ReminderCache _reminderCache = ReminderCache();
   final ReminderRunner _reminderRunner = ReminderRunner();
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _careReqSub;
@@ -40,7 +40,7 @@ class _CaregiverDashboardScreenState extends State<CaregiverDashboardScreen> {
     if (user != null) {
       _uid = user.uid;
 
-      // ✅ Create streams ONCE (important for Flutter web stability)
+      //Create streams ONCE (important for Flutter web stability)
       _userDocStream = FirebaseFirestore.instance.collection('users').doc(_uid).snapshots();
       _caregiverDocStream = FirebaseFirestore.instance.collection('caregivers').doc(_uid).snapshots();
 

@@ -46,7 +46,7 @@ class _CaregiverChatScreenState extends State<CaregiverChatScreen> {
     final msgDoc = _messagesRef.doc();
     final batch = FirebaseFirestore.instance.batch();
 
-    // ✅ rules expect sentAt
+    // rules expect sentAt
     batch.set(msgDoc, {
       'senderId': uid,
       'text': text,

@@ -43,7 +43,6 @@ class _GuardianChatScreenState extends State<GuardianChatScreen> {
     final msgDoc = _messagesRef.doc();
     final batch = FirebaseFirestore.instance.batch();
 
-    // ✅ MUST match your rules: sentAt
     batch.set(msgDoc, {
       'senderId': uid,
       'text': text,

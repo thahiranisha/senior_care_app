@@ -174,7 +174,7 @@ class _CaregiverBookingsScreenState extends State<CaregiverBookingsScreen> {
     final city = (r['city'] as String?) ?? '';
     final start = _fmtDate(r['startDate']);
 
-    // ✅ READ guardian info DIRECTLY from care_requests (no extra reads, no permissions issue)
+    // READ guardian info DIRECTLY from care_requests (no extra reads, no permissions issue)
     final guardianName = ((r['guardianName'] as String?) ?? 'Guardian').trim();
     final rawPhone = (r['guardianPhone'] as String?)?.trim() ?? '';
     final guardianPhone = rawPhone.isEmpty ? null : rawPhone;

@@ -43,7 +43,7 @@ class AdminDashboardScreen extends StatelessWidget {
 
           final caregivers = FirebaseFirestore.instance.collection('caregivers');
 
-          // ✅ pending supports BOTH values
+          // pending supports BOTH values
           final pendingQuery = caregivers.where('status', whereIn: ['PENDING_VERIFICATION', 'PENDING']);
           final verifiedQuery = caregivers.where('status', isEqualTo: 'VERIFIED');
           final rejectedQuery = caregivers.where('status', isEqualTo: 'REJECTED');
@@ -168,7 +168,7 @@ class _CountCard extends StatelessWidget {
   final String title;
   final Query<Map<String, dynamic>> query;
   final Color color;
-  final VoidCallback? onTap; // ✅
+  final VoidCallback? onTap;
 
   const _CountCard({
     required this.title,

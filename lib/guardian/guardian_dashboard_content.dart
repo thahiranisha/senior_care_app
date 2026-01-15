@@ -57,7 +57,7 @@ class _GuardianDashboardContentState extends State<GuardianDashboardContent> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ✅ Check-in status (under selected senior)
+        // Check-in status (under selected senior)
         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: _checkinStream,
           builder: (context, snap) {
@@ -121,7 +121,6 @@ class _GuardianDashboardContentState extends State<GuardianDashboardContent> {
         const Text('Quick Actions', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         const SizedBox(height: 10),
 
-        // ✅ Removed reminders + appointments
         Wrap(
           spacing: 10,
           runSpacing: 10,
