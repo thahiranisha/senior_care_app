@@ -37,10 +37,10 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
   final ReminderRunner _reminderRunner = ReminderRunner();
   String? _reminderSeniorsKey;
 
-  // ✅ SOS banner logic
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _sosSub;
-  String? _listeningSeniorId;
-  String? _activeSosAlertId; // current SOS alert shown
+  String? _listeningSeniorsKey;
+
+  String? _activeSosAlertId;
   bool _bannerVisible = false;
 
   @override
@@ -50,9 +50,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     super.dispose();
   }
 
-  // -------------------------------
-  // UI helpers
-  // -------------------------------
   void _snack(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -85,9 +82,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
   }
 
-  // -------------------------------
-  // Senior cache + picker
-  // -------------------------------
   Future<void> _primeSeniorCache(List<String> ids) async {
     if (_loadingCache) return;
 
@@ -149,9 +143,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     }
   }
 
-  // -------------------------------
-  // Register senior (same as yours)
-  // -------------------------------
   Future<String> _generateUniqueLinkCode(FirebaseFirestore db) async {
     final rnd = Random.secure();
 
@@ -199,7 +190,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
   }
 
   Future<void> _registerSenior(String guardianUid) async {
-    final data = await reg.showRegisterSeniorDialog(context);
+    final SeniorRegistrationData? data = await reg.showRegisterSeniorDialog(context);
     if (data == null) return;
 
     try {
@@ -244,9 +235,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     }
   }
 
-  // -------------------------------
-  // Med tile helpers (kept)
-  // -------------------------------
   void _openMedications(String seniorId, String seniorName) {
     Navigator.push(
       context,
@@ -285,7 +273,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
 
       var candidate = DateTime(now.year, now.month, now.day, h, m);
       if (!candidate.isAfter(now)) candidate = candidate.add(const Duration(days: 1));
-
       if (best == null || candidate.isBefore(best)) best = candidate;
     }
     return best;
@@ -354,12 +341,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     });
   }
 
-  // -------------------------------
-  // ✅ SOS Notification (MaterialBanner)
-  // - reads alerts(type=SOS)
-  // - shows banner until guardian dismisses
-  // - uses alerts/{alertId}/acks/{guardianUid}
-  // -------------------------------
   Future<bool> _isSosAcked(String alertId, String guardianUid) async {
     final ref = FirebaseFirestore.instance
         .collection('alerts')
@@ -391,6 +372,8 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
 
   void _showSosBanner({
     required String alertId,
+    required String seniorId,
+    required String seniorName,
     required String message,
     required String timeText,
     required String guardianUid,
@@ -407,7 +390,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
         backgroundColor: Colors.red.shade50,
         leading: const Icon(Icons.sos_rounded, color: Colors.redAccent),
         content: Text(
-          'SOS: $message\n$timeText',
+          'SOS from $seniorName\n$message\n$timeText',
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
         actions: [
@@ -423,28 +406,38 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     );
   }
 
-  void _attachSosListener(String seniorId) {
+  void _attachSosListenerForGuardianSeniors(List<String> seniorIds) {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    if (_listeningSeniorId == seniorId) return;
+    final cleaned = seniorIds.map((e) => e.trim()).where((e) => e.isNotEmpty).toList()..sort();
+    final key = cleaned.join(',');
+
+    if (_listeningSeniorsKey == key) return;
+    _listeningSeniorsKey = key;
 
     _sosSub?.cancel();
-    _listeningSeniorId = seniorId;
+
+    if (cleaned.isEmpty) return;
+
+    if (cleaned.length > 10) {
+      _snack('Too many linked seniors for SOS watch (max 10).');
+      return;
+    }
 
     final db = FirebaseFirestore.instance;
 
     _sosSub = db
         .collection('alerts')
-        .where('seniorId', isEqualTo: seniorId)
         .where('type', isEqualTo: 'SOS')
+        .where('seniorId', whereIn: cleaned)
         .orderBy('createdAt', descending: true)
         .limit(1)
         .snapshots()
         .listen((snap) async {
       if (!mounted) return;
+
       if (snap.docs.isEmpty) {
-        // No SOS now -> hide banner
         if (_bannerVisible) _hideBanner();
         return;
       }
@@ -459,29 +452,32 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
       }
 
       final data = doc.data();
+      final sid = (data['seniorId'] as String?) ?? '';
       final msg = (data['message'] as String?) ?? 'SOS alert';
       final ts = data['createdAt'] as Timestamp?;
       final timeText = _fmtTs(ts);
 
+      final sName = (_seniorCache[sid]?['fullName'] as String?)?.trim();
+      final seniorName = (sName != null && sName.isNotEmpty) ? sName : sid;
+
       _showSosBanner(
         alertId: alertId,
+        seniorId: sid,
+        seniorName: seniorName,
         message: msg,
         timeText: timeText,
         guardianUid: user.uid,
       );
+    }, onError: (e) {
+      if (!mounted) return;
+      _snack('SOS listener error: $e');
     });
   }
 
-  // -------------------------------
-  // Check-in status source (senior_status/{seniorId})
-  // -------------------------------
   Stream<DocumentSnapshot<Map<String, dynamic>>> _seniorStatusStream(String seniorId) {
     return FirebaseFirestore.instance.collection('senior_status').doc(seniorId).snapshots();
   }
 
-  // -------------------------------
-  // Caregiver search open
-  // -------------------------------
   void _openCaregivers(String seniorId) {
     Navigator.push(
       context,
@@ -489,9 +485,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
     );
   }
 
-  // -------------------------------
-  // BUILD
-  // -------------------------------
   @override
   Widget build(BuildContext context) {
     final currentUser = FirebaseAuth.instance.currentUser;
@@ -527,6 +520,9 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
           final fullName = (userData['fullName'] as String?) ?? 'Guardian';
           final ids = ((userData['linkedSeniorIds'] ?? []) as List).map((e) => e.toString()).toList()..sort();
 
+          _primeSeniorCache(ids);
+          _attachSosListenerForGuardianSeniors(ids);
+
           if (ids.isEmpty) {
             return Center(
               child: Padding(
@@ -549,9 +545,13 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                           child: const Icon(Icons.people_alt_outlined, size: 40, color: _themeColor),
                         ),
                         const SizedBox(height: 14),
-                        Text('Hello, $fullName', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        Text('Hello, $fullName',
+                            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 10),
-                        const Text('No seniors linked yet.\nRegister a senior to start monitoring.', textAlign: TextAlign.center),
+                        const Text(
+                          'No seniors linked yet.\nRegister a senior to start monitoring.',
+                          textAlign: TextAlign.center,
+                        ),
                         const SizedBox(height: 16),
                         SizedBox(
                           width: double.infinity,
@@ -578,10 +578,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
           final chosenId =
           (_selectedSeniorId != null && ids.contains(_selectedSeniorId)) ? _selectedSeniorId! : ids.first;
 
-          // cache + reminders + sos listener
-          _primeSeniorCache([chosenId]);
           _ensureGuardianRemindersForIds([chosenId]);
-          _attachSosListener(chosenId);
 
           final s = _seniorCache[chosenId];
           final name = (s?['fullName'] as String?)?.trim();
@@ -597,7 +594,6 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
             children: [
-              // Header
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -618,7 +614,11 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                         children: [
                           Text(
                             'Hello, $fullName',
-                            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                           const SizedBox(height: 6),
                           Text(
@@ -636,10 +636,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 14),
-
-              // Senior selector
               Card(
                 elevation: 1.5,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
@@ -650,10 +647,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                   onTap: () => _pickSenior(context, ids),
                 ),
               ),
-
               const SizedBox(height: 14),
-
-              // ✅ Check-in status from senior_status/{seniorId}
               StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
                 stream: _seniorStatusStream(chosenId),
                 builder: (context, snap) {
@@ -695,10 +689,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                   );
                 },
               ),
-
               const SizedBox(height: 14),
-
-              // Medications
               StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: medsStream,
                 builder: (context, snap) {
@@ -755,10 +746,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                   );
                 },
               ),
-
               const SizedBox(height: 14),
-
-              // Bookings
               Card(
                 elevation: 1.5,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
@@ -772,10 +760,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
                   },
                 ),
               ),
-
               const SizedBox(height: 14),
-
-              // ✅ Caregiver Search INSIDE dashboard (no extra screen route needed)
               _actionTile(
                 icon: Icons.search,
                 title: 'Find Caregivers',
