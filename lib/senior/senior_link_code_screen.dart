@@ -3,15 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
-/// Senior Link Code Screen
-///
-/// Flow:
-/// 1) Senior signs in (email/password).
-/// 2) Senior enters 6-digit link code received from guardian.
-/// 3) We atomically link:
-///    - seniors/{seniorId} -> linkedAuthUid, linked=true
-///    - link_codes/{code} -> used=true, usedByUid
-///    - users/{uid} -> role=senior, seniorId
 class SeniorLinkCodeScreen extends StatefulWidget {
   const SeniorLinkCodeScreen({super.key});
 
@@ -135,8 +126,41 @@ class _SeniorLinkCodeScreenState extends State<SeniorLinkCodeScreen> {
         );
       });
 
+      // IMPORTANT:
+      // Immediately after linking, the SeniorDashboard listens to users/{uid}
+      // via a stream. That stream can briefly emit the *previous* state (role
+      // missing) before it receives the updated document, which causes the
+      // dashboard to redirect back to this screen.
+      //
+      // To avoid the bounce, we wait until the server confirms users/{uid}
+      // has role=senior + the expected seniorId before navigating.
+      Future<bool> isProfileReady() async {
+        final s = await db
+            .collection('users')
+            .doc(uid)
+            .get(const GetOptions(source: Source.server));
+        final d = s.data() ?? <String, dynamic>{};
+        final r = (d['role'] as String?)?.toLowerCase().trim();
+        final sid = (d['seniorId'] as String?)?.trim();
+        return r == 'senior' && sid == seniorId;
+      }
+
+      var ok = false;
+      for (var i = 0; i < 12; i++) {
+        if (await isProfileReady()) {
+          ok = true;
+          break;
+        }
+        await Future.delayed(const Duration(milliseconds: 250));
+      }
+
       if (!mounted) return;
-      Navigator.pushNamedAndRemoveUntil(context, '/seniorDashboard', (_) => false);
+      if (ok) {
+        Navigator.pushNamedAndRemoveUntil(context, '/seniorDashboard', (_) => false);
+      } else {
+        // Fallback: if profile sync is slow, go through senior login routing.
+        Navigator.pushNamedAndRemoveUntil(context, '/seniorLogin', (_) => false);
+      }
     } catch (e, st) {
       debugPrint('Senior link failed: $e');
       debugPrint(st.toString());
@@ -152,7 +176,8 @@ class _SeniorLinkCodeScreenState extends State<SeniorLinkCodeScreen> {
         await _recoverIfAlreadyLinked();
       }
 
-      setState(() => _error = msg);
+      // If recover() navigated away, this widget may no longer be mounted.
+      if (mounted) setState(() => _error = msg);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -216,10 +241,10 @@ class _SeniorLinkCodeScreenState extends State<SeniorLinkCodeScreen> {
                       onPressed: _loading ? null : _linkNow,
                       child: _loading
                           ? const SizedBox(
-                              height: 22,
-                              width: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
+                        height: 22,
+                        width: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                           : const Text('Link & Continue', style: TextStyle(fontSize: 20)),
                     ),
                   ),

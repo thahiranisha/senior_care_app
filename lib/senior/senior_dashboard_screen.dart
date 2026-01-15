@@ -32,6 +32,12 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
 
   bool _remindersSyncedForSenior = false;
 
+  // Right after linking (or right after login), the users/{uid} stream can
+  // briefly emit a state where role/seniorId is missing. If we immediately
+  // redirect to /seniorLinkCode, the senior experiences a "bounce" back to
+  // the link screen even though linking actually succeeded.
+  DateTime? _unlinkedSince;
+
   @override
   void initState() {
     super.initState();
@@ -216,12 +222,24 @@ class _SeniorDashboardScreenState extends State<SeniorDashboardScreen> {
 
           // Not linked -> go link screen
           if (role != 'senior' || seniorId == null || seniorId.isEmpty) {
+            _unlinkedSince ??= DateTime.now();
+
+            // Give Firestore a short grace period to deliver the updated user
+            // profile (avoids redirect loop right after linking).
+            final elapsed = DateTime.now().difference(_unlinkedSince!);
+            if (elapsed < const Duration(seconds: 2)) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
               Navigator.pushNamedAndRemoveUntil(context, '/seniorLinkCode', (_) => false);
             });
             return const Center(child: CircularProgressIndicator());
           }
+
+          // Linked OK -> reset grace timer
+          _unlinkedSince = null;
 
           // Init streams once per seniorId
           if (_seniorId != seniorId || _seniorDocStream == null) {
