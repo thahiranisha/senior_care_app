@@ -113,8 +113,7 @@ Future<void> syncMedicationRemindersForSeniors({
         }
       }
     } catch (e) {
-      // If this senior's meds can't be read (rules), skip silently
-      // (You can debugPrint(e.toString()) if you want)
+
     }
   }
 

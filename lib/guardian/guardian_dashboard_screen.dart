@@ -578,7 +578,7 @@ class _GuardianDashboardScreenState extends State<GuardianDashboardScreen> {
           final chosenId =
           (_selectedSeniorId != null && ids.contains(_selectedSeniorId)) ? _selectedSeniorId! : ids.first;
 
-          _ensureGuardianRemindersForIds([chosenId]);
+          _ensureGuardianRemindersForIds(ids);
 
           final s = _seniorCache[chosenId];
           final name = (s?['fullName'] as String?)?.trim();
