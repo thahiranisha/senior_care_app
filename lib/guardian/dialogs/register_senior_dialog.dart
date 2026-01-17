@@ -48,7 +48,7 @@ Future<SeniorRegistrationData?> showRegisterSeniorDialog(BuildContext context) a
                         context: context,
                         firstDate: DateTime(1900),
                         lastDate: now,
-                        initialDate: DateTime(now.year - 60),
+                        initialDate: DateTime(now.year - 70),
                       );
                       if (picked != null) setState(() => dob = picked);
                     },

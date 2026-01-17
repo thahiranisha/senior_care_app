@@ -2,16 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'reminder_cache.dart';
 
 bool _isMedicationEntry(Map<String, dynamic> v) {
-  // A medication reminder entry always has medId + time (based on your structure)
   return v.containsKey('medId') && v.containsKey('time');
 }
 
-/// Syncs in-app medication reminders for one or more seniors into [cache].
-/// Updates ONLY medication reminders (doesn't wipe other reminder types).
-///
-/// If you pass a single seniorId (selected senior), this will:
-/// - remove medication reminders for other seniors
-/// - refresh medication reminders for the selected senior
 Future<void> syncMedicationRemindersForSeniors({
   required List<String> seniorIds,
   required ReminderCache cache,
@@ -54,7 +47,6 @@ Future<void> syncMedicationRemindersForSeniors({
     return sid.isNotEmpty && !ids.contains(sid);
   });
 
-  // Also remove medication reminders for seniors in ids (so we "refresh" them cleanly)
   existing.removeWhere((k, v) {
     if (!_isMedicationEntry(v)) return false;
     final sid = (v['seniorId'] as String?)?.trim() ?? '';
@@ -76,8 +68,6 @@ Future<void> syncMedicationRemindersForSeniors({
       }
     }
   } catch (_) {
-    // If permissions are missing for names, meds query may also fail.
-    // We still continue; names will just be blank.
   }
 
   // Build new medication entries
